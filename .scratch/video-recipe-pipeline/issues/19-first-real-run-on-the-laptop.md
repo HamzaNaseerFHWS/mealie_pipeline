@@ -10,7 +10,7 @@
 - [ ] `.env` filled in (`MEALIE_URL=http://mealie.taildce5a6.ts.net:9000`, `MEALIE_TOKEN`). `uv run mp doctor` is all green, and its output is pasted into Comments.
 - [ ] `uv run mp bench-whisper` run with an English, a German and an Urdu/Hindi clip. The chosen model is recorded. If Urdu/Hindi quality is poor, decide here (with the user) between a per-language model, preferring subtitles, or the OpenAI fallback for ur/hi, and record it.
 - [ ] `uv run mp login youtube` (plus instagram/facebook if the pilot list is there).
-- [ ] Existing-recipe check: on a list containing reels you already imported, `--dry-run` shows them as `already_in_mealie`. Check `reports/existing_matches.csv` with the user.
+- [ ] Existing-recipe check: on a list containing reels you already imported, `--dry-run` shows them as `already_in_mealie`.
 - [ ] The pilot list from wayfinder 14 is added and synced, and the run uses `--limit 20 --dry-run` first. The payloads in `work/` look right.
 - [ ] Real run `--limit 20`. Results reviewed in Mealie with the user. Problems become new tickets (`needs-triage`) under this folder.
 - [ ] The usage summary from `mp status` is recorded (how many recipes fit one Pro window).
