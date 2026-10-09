@@ -1,6 +1,6 @@
 # Mealie video recipe pipeline: plan and spec
 
-**Status:** Draft v0.1. Needs answers to the [open questions](#11-open-questions) before build starts.
+**Status:** Draft v0.2 (own scraper, parser and verification; Mealie is storage only). Needs answers to the [open questions](#11-open-questions) before build starts.
 **Goal:** Import about 900 cooking videos (about 300 each from Instagram, YouTube and Facebook) into a self-hosted Mealie instance as clean recipes. Each recipe should have parsed ingredients (quantity, unit and food all linked) and at least one existing tag.
 
 ---
@@ -16,21 +16,20 @@ I checked Mealie's current source (`v3.28.0`, `mealie-recipes/mealie`, commit `9
 | **Instagram and Facebook need cookies** | `YTDLP_COOKIEFILE` setting | Without a cookie file, many Instagram and Facebook downloads fail or return empty media. |
 | **Website links in descriptions are ignored** | `compilers/transcription.py` puts the description in as text only | If the full recipe is on your website ("recipe at example.com/…"), Mealie never fetches that page, so it relies on a noisier transcript. |
 
-So the plan is to **do the extraction, tagging and parsing ourselves** and use Mealie's API only for things it does well: storage, the ingredient parser, and food, unit and tag lookups.
+Its transcripts and AI output weren't good enough in practice either. **Decision (v0.2):** the pipeline does **not** use Mealie's import, scraper, transcription, AI or ingredient parser. Everything (visiting websites, reading video pages, transcription, extraction, ingredient parsing, tagging and **verification**) runs in our own code. Mealie is **only the storage target**: we read its tags, foods and units, and write finished, already-checked recipes.
 
 ---
 
 ## 2. Architecture overview
 
 ```
- ┌──────────┐   ┌──────────┐   ┌────────────┐   ┌──────────┐   ┌────────┐   ┌──────────┐   ┌────────┐
- │ 0.DISCOVER│──▶│ 1.FETCH  │──▶│2.TRANSCRIBE│──▶│3.EXTRACT │──▶│ 4.TAG  │──▶│5.PARSE   │──▶│6.UPLOAD│──▶ 7.REVIEW
- │ list all  │   │ metadata │   │ (only if   │   │ LLM →    │   │ closed │   │ Mealie   │   │ Mealie │
- │ videos    │   │ desc,subs│   │  needed)   │   │ recipe   │   │ list   │   │ parser + │   │ API    │
- │ + dedupe  │   │ audio,   │   │            │   │ JSON     │   │ ≥1 tag │   │ food/unit│   │        │
- │           │   │ website  │   │            │   │          │   │        │   │ resolve  │   │        │
- └──────────┘   └──────────┘   └────────────┘   └──────────┘   └────────┘   └──────────┘   └────────┘
-                        │                 all stage outputs cached on disk + state in SQLite
+ 0.DISCOVER ─▶ 1.SCRAPE ─▶ 2.TRANSCRIBE ─▶ 3.EXTRACT ─▶ 4.PARSE ─▶ 5.TAG ─▶ 5b.VERIFY ─▶ 6.UPLOAD ─▶ 7.REVIEW
+ list videos   our own     own STT,       LLM with      own         closed    checks +      Mealie API    report +
+ + dedupe      scraper:    only if        evidence      ingredient  list,     score gate    (storage      review
+               video page  needed         quotes        parser +    ≥1 tag    ─────────     only) +       queue
+               + website                                food/unit             fail ⇒ retry  read-back
+                                                        resolve               or review     check
+            all stage outputs cached on disk + state in SQLite; every stage re-runnable on its own
 ```
 
 **Design principles**
@@ -41,7 +40,7 @@ So the plan is to **do the extraction, tagging and parsing ourselves** and use M
 - **Dry-run mode** runs the whole pipeline and writes the final JSON without touching Mealie.
 - **Start with a pilot of 20 videos** (a mix of platforms), check the results in the Mealie UI, tune, then run the rest.
 
-**Stack:** Python 3.12, `uv`, `httpx`, `pydantic` v2, `yt-dlp` (+ `curl_cffi` for impersonation), `faster-whisper` (optional local transcription), `recipe-scrapers` / `extruct` for website schema.org, `typer` CLI, `sqlite3`. Runs on **the same PC as Mealie**, so the API is just `http://localhost:9000`.
+**Stack:** Python 3.12, `uv`, `httpx`, **Playwright** (headless Chromium for JS-heavy pages and link-in-bio pages), `selectolax` / `trafilatura` (HTML → clean text), `extruct` + `recipe-scrapers` (structured data), `pydantic` v2, `yt-dlp` (+ `curl_cffi`), `faster-whisper`, `ingredient-parser-nlp`, `rapidfuzz`, `typer` CLI, `sqlite3`. Runs on **the same PC as Mealie**, so the API is just `http://localhost:9000`.
 
 ---
 
@@ -65,176 +64,213 @@ The dedupe output is a CSV you can check and correct by hand before continuing.
 
 ---
 
-## 4. Stage 1: Fetch (raw material for each video)
+## 4. Stage 1: Scrape (our own scraper, video page and website)
 
-For each canonical video, save under `data/<platform>/<id>/`:
+Mealie's scraper is not used. Our scraper gathers **every** piece of raw evidence for a video and saves it, so later stages and the verifier can always go back to the original source.
+
+### 4.1 Video page
+
+Saved under `data/<platform>/<id>/`:
 
 | File | How |
 |---|---|
-| `info.json` | `yt-dlp --skip-download --write-info-json` (title, description, uploader, duration, thumbnail, chapters), or straight from the export / Graph API JSON |
-| `description.txt` | from `info.json` / caption |
-| `subs.<lang>.vtt` | `yt-dlp --write-subs --write-auto-subs --sub-langs "en.*,<your-lang>" --skip-download` (YouTube is excellent here, Instagram and Facebook rarely have them) |
-| `thumb.jpg` | `--write-thumbnail` (becomes the recipe image) |
-| `audio.m4a` | **only if** stage 2 needs it: `yt-dlp -f bestaudio -x` (or extract from the exported MP4 with `ffmpeg -vn`) |
-| `website.html` / `website.recipe.json` | see below |
+| `info.json` | `yt-dlp --skip-download --write-info-json` (title, full description, uploader, duration, chapters, thumbnail), or the export / Graph API record |
+| `description.txt` | full description or caption, **not truncated** (the "…more" text is in `info.json`) |
+| `pinned_comment.txt` | creators often post the recipe in a pinned comment. `yt-dlp --write-comments --extractor-args "youtube:max_comments=20"`, keeping only comments by the uploader |
+| `subs.<lang>.vtt` | `--write-subs --write-auto-subs --sub-langs "en.*,<lang>"`. Creator subtitles and auto-subtitles are kept apart |
+| `thumb.jpg` | `--write-thumbnail` |
+| `video.mp4` / `audio.m4a` | only if stage 2 needs them (exports already contain the MP4) |
 
-**Following website links (requirement #1):**
+### 4.2 Website (the main source when it exists)
 
-1. Pull URLs out of the description/caption with a regex. Expand short links (`bit.ly`, `linktr.ee`, `lnk.bio`…) by following redirects.
-2. Keep links on **your recipe domain(s)** (an allowlist in config). Ignore affiliate and shop links.
-3. Fetch the page and pull out the **schema.org `Recipe` JSON-LD** (`extruct` / `recipe-scrapers`). Most recipe sites (WordPress + WPRM / Tasty Recipes) have it.
-4. If structured data exists, it's the **top-priority source**, and the LLM's job in stage 3 becomes "clean and normalize" instead of "extract".
-5. "Link in bio" posts with no direct link can't be resolved automatically. They fall through to caption + transcript.
+1. **Link discovery:** pull URLs from the description, the pinned comment and the channel "about" links.
+   - Expand short links (`bit.ly`, `tinyurl`, `geni.us`) by following redirects with `httpx`.
+   - **Link-in-bio pages** (`linktr.ee`, `lnk.bio`, `beacons.ai`, Instagram "link in bio") are opened in **Playwright** and their links collected. A link is picked by fuzzy-matching the video title against the link text or slug.
+   - **Site search fallback:** if a video has no link but you have a recipe website, search the site for the video title (`/?s=<title>`, the WordPress REST API `/wp-json/wp/v2/posts?search=`, or `sitemap.xml`) and fuzzy-match titles (≥ 85). It's flagged `link_source=site_search` so the verifier is stricter.
+2. **Fetch:** use `httpx` first, with a real browser User-Agent and HTTP/2. If the page is blocked (403/429, Cloudflare challenge) or the recipe card is rendered by JS, retry with Playwright. Raw `page.html` is saved, plus `page.png` (a screenshot, useful for review).
+3. **Extract structured data, in this order:**
+   1. **JSON-LD `@type: Recipe`** via `extruct` (including inside `@graph`, which is the WordPress/Yoast style)
+   2. **Microdata / RDFa** `Recipe` via `extruct`
+   3. **Recipe-card plugin HTML** (WP Recipe Maker `.wprm-recipe`, Tasty Recipes `.tasty-recipes`, Mediavine Create `.mv-create`) via site-specific CSS selectors in `config/site_selectors.yaml`
+   4. **`recipe-scrapers`** site-specific scrapers
+   5. **Fallback:** `trafilatura` main-content text → handed to the LLM in stage 3 as unstructured text
+4. **Normalize** to an internal `SourceRecipe` (name, ingredient lines with section titles, steps, yield, times, image). The `extraction_method` used is recorded, because it feeds the confidence score.
+5. **Politeness:** respect `robots.txt` for third-party sites (your own site can be allowlisted), allow 1 request every 2–3 s per domain, and cache everything so each page is fetched once.
 
-**Rate limiting:** 1 request per 2–5 s per platform with jitter, exponential backoff on 429, and `--sleep-requests` / `--sleep-interval` for yt-dlp. With 900 videos this still finishes in an evening.
+### 4.3 Source priority
+
+```
+website structured data  >  website plugin HTML  >  description / pinned comment with ingredient list
+  >  creator subtitles  >  our Whisper transcript  >  YouTube auto-subs  >  website plain text (LLM)
+```
+
+All available sources are still passed on, not only the best one. The verifier uses the extra ones to **cross-check**.
 
 ---
 
-## 5. Stage 2: Transcribe (only when needed)
+## 5. Stage 2: Transcribe (our own, only when needed)
 
-**Decision rule:** skip transcription if a website recipe was found, **or** the description already contains an ingredient list. A heuristic: 3 or more lines matching quantity + unit patterns, or the words "ingredients" / "zutaten" / etc. Otherwise use creator subtitles if they exist, then auto-subtitles, then speech-to-text.
+**Decision rule:** transcribe if there's no website recipe **or** a video is the only evidence for quantities. Even when a website exists, we still transcribe a short sample if the website ingredient list looks incomplete (fewer than 3 ingredients). We don't use Mealie's transcription or YouTube auto-subs as the main transcript, because auto-subs have no punctuation and garble ingredient names.
 
-Rough volume estimate: about 900 videos × about 1.5 min ≈ **22 h of audio** worst case (probably far less after skips).
+Rough volume estimate: about 900 videos × about 1.5 min ≈ **22 h of audio** worst case (much less after skips).
 
 | Option | Quality | Cost for about 22 h | Notes |
 |---|---|---|---|
-| **`faster-whisper` `large-v3-turbo`, local** ⭐ if you have an NVIDIA GPU | Very good | Free | About 1 min of audio per few seconds on a modern GPU. CPU works but is slow (int8, hours). No upload, no limits. |
-| **Groq `whisper-large-v3-turbo`** ⭐ if no GPU | Very good | About $0.04/h → **about $1** | OpenAI-compatible API. Free tier is about 8 h of audio/day, so it fits in 3 days. 25 MB file limit, so send 16 kHz mono opus. |
-| OpenAI `gpt-4o-mini-transcribe` | Very good | About $0.18/h → about $4 | Also what Mealie's own audio provider uses. |
-| OpenAI `gpt-4o-transcribe` | Best on noisy, music-heavy audio | About $0.36/h → about $8 | Worth it only for videos the others fail on. |
-| YouTube auto-subs (free) | OK, no punctuation | Free | YouTube only, already fetched in stage 1. |
+| **`faster-whisper` `large-v3`, local** ⭐ if you have an NVIDIA GPU | Very good | Free | Word timestamps, VAD filter (`vad_filter=True`) to skip music. |
+| **Groq `whisper-large-v3`** ⭐ if no GPU | Very good | About $0.11/h → **about $2.50** | 25 MB limit, so send 16 kHz mono opus. A free tier exists. |
+| OpenAI `gpt-4o-transcribe` | Best on music-heavy audio | About $0.36/h → about $8 | Retry engine for videos the others fail on. |
 
-**Tips for cooking reels:** background music hurts accuracy. Pass a **prompt/glossary** to Whisper (`initial_prompt` with common ingredient and unit words) and the video title. Many reels say almost nothing and show text on screen, so for those the **caption is the source**. *Optional later:* sample frames and OCR the on-screen text with a vision LLM. This is out of scope for v1, but such videos are flagged.
+**Making it robust:**
+- **Vocabulary prompt:** the video title + description + common units go in `initial_prompt` / `prompt`, so "gochujang" isn't heard as "go-to-jang".
+- **Audio pre-processing:** `ffmpeg -af "highpass=f=100,lowpass=f=8000,loudnorm"`. Optional: separate vocals with `demucs` for videos with loud music (turned on automatically if the first pass has low average log-probability or `no_speech_prob > 0.5`).
+- **Quality signals stored per transcript:** average log-probability, no-speech ratio, and words per minute. A silent reel (music + text on screen) is detected here and routed to **on-screen text OCR**: sample 1 frame/s with `ffmpeg`, dedupe similar frames, and read the overlay text with a vision LLM. This is phase 2, but the routing exists from day one.
 
-Output: `transcript.txt` + `transcript.source` (`website|description|subs|auto_subs|whisper`).
+Output: `transcript.json` (segments with timestamps), `transcript.txt`, `transcript.meta.json`.
 
 ---
 
-## 6. Stage 3: Extract (LLM → structured recipe)
+## 6. Stage 3: Extract (LLM → structured recipe, with evidence)
 
-Put all the sources in one prompt, labeled and ordered by trust:
+When structured website data exists, the LLM **does not rewrite it**. It only fills gaps (missing times or servings) and merges in tips from the video. When there's no website recipe, the LLM extracts from description + transcript.
+
+The prompt gets all sources, labeled:
 
 ```
-## Website recipe (schema.org)      ← if any
-## Video title
-## Video description / caption
-## Transcript (source: whisper)
+[SRC:web]   Website recipe (JSON-LD)
+[SRC:desc]  Video description
+[SRC:cmt]   Pinned comment
+[SRC:asr]   Transcript (whisper, with timestamps)
+[SRC:ocr]   On-screen text (if any)
 ```
 
-Ask the LLM for **structured output** (JSON schema enforced) that matches this model:
+**Every ingredient and step must cite its evidence.** The output schema is enforced with structured outputs:
 
 ```python
+class Evidence(BaseModel):
+    source: Literal["web", "desc", "cmt", "asr", "ocr"]
+    quote: str                      # verbatim substring of that source
+
+class ExtractedIngredient(BaseModel):
+    line: str                       # "2 cups all-purpose flour, sifted"
+    section: str | None             # "For the sauce"
+    evidence: list[Evidence]        # ≥1, required
+    quantity_stated: bool           # false ⇒ the source never gave an amount
+
 class ExtractedRecipe(BaseModel):
-    is_recipe: bool                 # false for vlogs, ads, Q&A → skipped, logged
+    is_recipe: bool
     name: str
-    description: str                # 1–2 sentences, your voice
+    description: str
     servings: float | None
-    yield_text: str | None          # "12 cookies"
+    yield_text: str | None
     prep_minutes: int | None
     cook_minutes: int | None
     total_minutes: int | None
-    ingredient_sections: list[IngredientSection]   # title optional ("For the sauce")
-    #   each line is ONE ingredient as a human would write it: "2 cups all-purpose flour, sifted"
-    instructions: list[Step]        # each step: optional title + text
-    notes: list[str]                # tips, substitutions, storage
+    ingredients: list[ExtractedIngredient]
+    instructions: list[Step]        # each with evidence too
+    notes: list[str]
     language: str
-    source_confidence: float        # 0–1, the model's own estimate of how complete this is
-    missing_info: list[str]         # e.g. ["quantities not stated for spices"]
 ```
 
-Rules in the prompt:
+Rules: **never invent quantities** (unstated means `to taste` / `quantity_stated=false`), one ingredient per line, keep section headers, and use the original wording for food names.
 
-- **Never invent quantities.** If the video says "some salt", output `salt, to taste`.
-- Normalize ingredient lines into the `qty unit food, prep note` form. This shape gives the Mealie parser in stage 5 the best chance.
-- Keep the original language, or translate to a configured target language (decision needed).
-- Fold "Ingredients:" lists from the caption in verbatim when they exist.
-
-**Model:** a Claude model through the Anthropic API with structured outputs. Haiku 5.5 is likely enough for most videos, with Sonnet 5.5 as a retry for low-confidence results. This is configurable, and any OpenAI-compatible model works too. I'll check the per-recipe cost on the pilot batch before the full run.
-
-Output: `recipe.extracted.json`.
+**Model:** a Claude model through the Anthropic API with structured outputs. Sonnet 5.5 for extraction, because accuracy matters more than cost on about 300–900 recipes. Configurable. The cost per recipe is measured on the pilot.
 
 ---
 
-## 7. Stage 4: Tag (≥1 existing tag, required)
+## 7. Stage 4: Parse ingredients (our own parser, two engines that must agree)
 
-1. `GET /api/organizers/tags?perPage=-1` loads **all** existing tags (`id`, `name`, `slug`). Same for categories via `/api/organizers/categories` if you want them too.
-2. Send the LLM the recipe and the **full tag list as an enum** in the JSON schema, so it can't return a tag that doesn't exist. Ask for 1–6 tags with a short reason each, ranked.
-3. **Deterministic boosts / guards** in `config/tag_rules.yaml`. These are keyword rules, for example `chicken|turkey → "Poultry"`, `no meat/fish in foods → "Vegetarian"`, `total_minutes <= 30 → "Quick"`, and `platform == instagram → "Reel"` (if such tags exist).
-4. **Validation:** at least one tag required. If the LLM returns none, retry once with a stronger prompt. If it still returns none, apply the configured fallback tag (for example `To Review`) and add the recipe to the review queue.
-5. **New tags:** off by default. Suggested new tags go into `suggested_tags.csv` for you to approve. After approval, they're created with `POST /api/organizers/tags` and stage 4 re-runs.
+Mealie's `/api/parser` is not used. Each ingredient line is parsed by **two independent engines** locally:
 
----
+1. **`ingredient-parser-nlp`** (Python library, CRF model) gives quantity (incl. ranges and fractions), unit, food name, size, preparation, comment, and confidence per field.
+2. **The LLM** parses the same line, constrained to `{quantity, quantity_max, unit, food, note}`, with your Mealie unit list in the prompt.
 
-## 8. Stage 5: Parse ingredients (so they display properly)
+**Reconciliation per line:**
 
-This is the part the built-in import skips. Steps:
+| Case | Action |
+|---|---|
+| Both agree (qty equal, unit maps to the same Mealie unit, food fuzzy ≥ 90) | accept, `parse_status=agreed` |
+| Disagree on one field, NLP confidence for that field ≥ 0.9 | take NLP, `parse_status=nlp_preferred` |
+| Disagree otherwise | take the LLM result, `parse_status=conflict` → counts against the recipe score |
+| No food found by either | keep the line as note-only, `parse_status=unparsed` → recipe goes to review |
 
-1. **Parse.** `POST /api/parser/ingredients`
-   ```json
-   { "parser": "nlp", "ingredients": ["2 cups all-purpose flour, sifted", "1 tsp salt", ...] }
-   ```
-   The response is a list of `ParsedIngredient { confidence: {average, quantity, unit, food, comment}, ingredient: RecipeIngredient }`. Mealie's parser already tries to match the food and unit against your existing database, so a matched food comes back **with an `id`**.
-   - `parser` options: `nlp` (CRF model, fast, free, English-focused), `brute` (rule-based), and `openai` (uses the AI provider configured in Mealie, which is better for non-English text or messy lines).
-2. **Low-confidence retry.** For items with `confidence.average < 0.75` (tunable), or with no food detected, re-parse that line with `parser: "openai"` if your Mealie has an AI provider. Otherwise our LLM does it, constrained to output `{quantity, unit, food, note}`.
-3. **Resolve IDs.** `PUT/PATCH /api/recipes/{slug}` does **not** auto-create foods or units (only the zip importer does), so every food and unit must be an existing record:
-   - Load all foods and units once: `GET /api/foods?perPage=-1`, `GET /api/units?perPage=-1` (names, plural names, aliases).
-   - Match locally: exact → plural/alias → normalized (lowercase, singular) → fuzzy (`rapidfuzz` ≥ 92).
-   - Still unmatched: **create** with `POST /api/foods` `{ "name": "...", "pluralName": null }` / `POST /api/units` `{ "name": "...", "abbreviation": "..." }`, and log the creation to `created_foods.csv` (default on, see question 6). Units are a short list, so we pre-seed common ones before the run.
-   - Hold a per-run lock on creation so two recipes in parallel don't both create "garlic".
-4. **Build the final ingredient objects:**
-   ```json
-   {
-     "quantity": 2, "unit": {"id": "...", "name": "cup"},
-     "food": {"id": "...", "name": "all-purpose flour"},
-     "note": "sifted", "originalText": "2 cups all-purpose flour, sifted",
-     "title": "For the dough",           // section header on first item of a section only
-     "referenceId": "<uuid4>"
-   }
-   ```
-5. **Optional:** link ingredients to steps (`recipeInstructions[].ingredientReferences[].referenceId`) by matching food names in the step text. This gives you the "ingredients used in this step" view.
+**Unit normalization:** a local table maps `tbsp/tbs/T/Esslöffel/EL → tablespoon`, `g/gr/grams → gram`, and so on, onto **your Mealie units** (`GET /api/units?perPage=-1`).
+
+**Food resolution** against **your Mealie foods** (`GET /api/foods?perPage=-1`, names + plural names + aliases):
+exact → plural/alias → singularized + lowercased → `rapidfuzz` token-set ≥ 92 → **new food**.
+New foods are created with `POST /api/foods` and logged in `created_foods.csv` (or queued for approval, see question 6). Mealie's `PATCH /api/recipes/{slug}` does **not** create missing foods or units, so every ingredient must point to an existing `id` before upload.
+
+**Sanity checks per line:** a quantity is out of range for its unit (for example `> 5 kg` salt or `> 20 tbsp`), a count unit is used with a liquid, or a food is actually a unit ("cup" as the food). Any of these makes the line `suspicious`.
 
 ---
 
-## 9. Stage 6: Upload to Mealie
+## 8. Stage 5: Tag (≥1 existing tag, required)
 
-All calls use `Authorization: Bearer <MEALIE_API_TOKEN>` against `MEALIE_URL` (for example `http://localhost:9000`).
+1. `GET /api/organizers/tags?perPage=-1` loads **all** your tags, not just the first 200.
+2. The LLM gets the parsed recipe and the **full tag list as a JSON-schema enum**, so it can't return a tag that doesn't exist. It returns 1–6 tags, each with a reason.
+3. **Rule tags** from `config/tag_rules.yaml`, computed from parsed data rather than guesses: `no meat/fish foods → Vegetarian`, `total ≤ 30 min → Quick`, `foods ∋ chicken|turkey → Poultry`, and so on.
+4. **Contradiction check:** the LLM said "Vegetarian" but a parsed food is in the meat list, so the tag is dropped and flagged.
+5. At least one tag is required. If none are left, retry once. If there are still none, use the fallback tag `To Review`.
+6. Suggested **new** tags only go to `suggested_tags.csv` for your approval.
+
+---
+
+## 9. Stage 5b: Verify (the gate before anything reaches Mealie)
+
+Every recipe gets a **quality score (0–100)** made of hard checks and soft checks. **Hard failures block upload.**
+
+| # | Check | Type |
+|---|---|---|
+| H1 | `is_recipe == true` and name is non-empty | hard |
+| H2 | ≥ 2 ingredients and ≥ 1 instruction step | hard |
+| H3 | **Grounding:** every ingredient's evidence `quote` actually occurs in the cited source (fuzzy ≥ 90 on normalized text), so no hallucinated ingredients | hard (per ingredient → dropped + flagged; > 20 % dropped → recipe fails) |
+| H4 | Every ingredient has a resolved Mealie `food.id` (or is an intentional note line like "Salt and pepper to taste") | hard |
+| H5 | ≥ 1 existing tag | hard |
+| S1 | **Cross-source agreement:** when both website and video exist, compare the ingredient sets (food-level Jaccard). Low overlap suggests the wrong website page was matched | soft (< 0.5 → review) |
+| S2 | **Ingredients ↔ steps:** each food is mentioned in some step, and each food mentioned in the steps is in the ingredient list | soft |
+| S3 | Parse agreement rate (stage 4) | soft |
+| S4 | Transcript quality signals (stage 2) | soft |
+| S5 | Quantity sanity: the `suspicious` count from stage 4 | soft |
+| S6 | Times and servings are plausible (total ≥ prep, servings 1–50) | soft |
+| S7 | **LLM judge:** an independent call that sees the final recipe and the raw sources and answers *"What's missing or wrong?"* in a JSON list | soft |
+
+**Gate:** score ≥ 80 with no hard fail → upload. 60–79 → upload with the `To Review` tag (if allowed). Below 60 or a hard fail → **retry once** with a stronger model and the verifier's findings in the prompt. If it still fails, it goes to the review queue only and is not uploaded.
+
+Output: `verify.json` (each check, pass/fail, details) is kept with the recipe.
+
+---
+
+## 10. Stage 6–7: Upload to Mealie, read-back, review
+
+All calls use `Authorization: Bearer <MEALIE_TOKEN>` against `MEALIE_URL` (for example `http://localhost:9000`).
 
 | Step | Call |
 |---|---|
-| Idempotency check | `GET /api/recipes?queryFilter=orgURL="<url>"`. If found, update instead of creating (or skip, depending on `--mode`). |
-| Create shell | `POST /api/recipes` `{ "name": "..." }` → returns `slug` |
-| Fill everything | `PATCH /api/recipes/{slug}` with `description`, `recipeServings`, `recipeYield`, `prepTime`/`performTime`/`totalTime`, `recipeIngredient` (stage 5), `recipeInstructions` (`[{id,title,summary,text,ingredientReferences}]`), `notes`, `tags` (`[{id,name,slug}]`), `recipeCategory`, `orgURL` (canonical video URL), `extras` (`{"pipeline_source": "...", "platform": "...", "video_id": "...", "also_on": "..."}`) |
-| Image | `POST /api/recipes/{slug}/image` `{ "url": "<thumbnail url>" }`, or for exported files `PUT /api/recipes/{slug}/image` (multipart upload of `thumb.jpg`) |
-| Optional: attach video | `POST /api/recipes/{slug}/assets` (multipart). Off by default because 900 videos would fill your disk. |
-| Verify | `GET /api/recipes/{slug}`: check that every ingredient has `food.id`, there's ≥1 tag, and there's ≥1 instruction. Otherwise mark `needs_review`. |
+| Idempotency | `GET /api/recipes?queryFilter=orgURL="<url>"`. If found, update (or skip, per `--mode`). |
+| Create shell | `POST /api/recipes` `{ "name": "..." }` → `slug` |
+| Fill | `PATCH /api/recipes/{slug}` with `description`, `recipeServings`, `recipeYield`, `prepTime`/`performTime`/`totalTime`, `recipeIngredient` (`[{quantity, unit:{id,name}, food:{id,name}, note, originalText, title, referenceId}]`), `recipeInstructions` (`[{id,title,summary,text,ingredientReferences}]`), `notes`, `tags` (`[{id,name,slug}]`), `orgURL`, `extras` (`{pipeline_version, platform, video_id, website_url, score, also_on}`) |
+| Image | Website image if it exists, otherwise the video thumbnail: `PUT /api/recipes/{slug}/image` (multipart upload of the local file, so no Mealie-side scraping) |
+| **Read-back check** | `GET /api/recipes/{slug}` and compare with what we sent: same ingredient count, every `food.id` present, tags present, steps present. On a mismatch, mark `upload_mismatch` and retry. |
 
-**Exact field names** (camelCase aliases) are checked against your instance's `/docs` OpenAPI page in the pilot, so the client is generated or validated against **your** version.
+Exact camelCase field names are checked against your instance's `/openapi.json` during the smoke test (M0).
 
----
-
-## 10. Stage 7: Review and reporting
-
-- `report.csv` has one row per video: status, source used, transcript source, tags assigned, ingredient parse confidence (min and avg), number of foods created, Mealie URL.
-- **Review queue** criteria: `is_recipe == false`, `source_confidence < 0.6`, any ingredient without a food, fallback tag used, or an ingredient line with no quantity that isn't "to taste". These recipes also get a `To Review` tag in Mealie (if you agree), so you can filter them in the UI.
-- After the run: `GET /api/foods/empty` and `GET /api/organizers/tags/empty` to clean up orphans.
-
----
+**Reporting:**
+- `report.csv` / `report.html` has one row per video: score, which checks failed, source used, transcript quality, tags, foods created, and the Mealie link.
+- `review/` has one Markdown file per recipe needing attention, showing the sources side by side with the extracted recipe and the failed checks.
+- After the run: `GET /api/foods/empty`, `GET /api/organizers/tags/empty` for cleanup, and `PUT /api/foods/merge` for duplicate foods.
 
 ## 11. Open questions
 
-1. **"A link on their website":** which of these do you mean?
-   (a) The video description links to **your own recipe website**, and we should scrape the recipe from there. (If so, what's the domain?)
-   (b) Just "the platform's website", meaning grab the description from the video page.
-   (c) Something else?
+1. **Websites to scrape:** which domain(s) do the video descriptions link to? Is it one recipe site (your own?) or many different creators' sites? Can you send me 3–5 example video URLs, including one where the link only works through link-in-bio, so I can build and test the scraper on real pages first?
 2. **Whose videos are these?** Are they **your own accounts** (then official data exports are the best route for Instagram and Facebook), or someone else's / saved posts (then we need yt-dlp + cookies)?
 3. **Is it the same recipes on all three platforms?** Is it about 300 unique recipes posted 3 times, or about 900 different ones? This decides whether dedupe is central.
 4. **Language** of the videos, and the language you want the recipes stored in.
 5. **Hardware:** do you have an NVIDIA GPU (then local Whisper is free), or should we use Groq or OpenAI? Which LLM API keys do you already have (Anthropic, OpenAI, other)?
 6. **Foods and units:** is it OK to auto-create missing foods and units in Mealie (logged to CSV), or should unknown ones go to a review list first?
 7. **Tags:** is it OK to add a `To Review` tag for uncertain recipes? Should the pipeline also set **categories** and **tools**, or only tags? Is it allowed to *suggest* new tags?
-8. **Mealie version and setup:** which version are you running (Settings → About), and is it on Docker at `localhost:9000`? Do you already have an AI provider configured in Mealie? That would allow `parser: "openai"`.
+8. **Mealie version and setup:** which version are you running (Settings → About), and is it on Docker at `localhost:9000`? (Needed only for API field names, since nothing of Mealie's AI or parser is used.)
 9. **Existing recipes:** are some of these videos already imported (badly)? Should the pipeline **update** them (matched by `orgURL`) or skip them?
-10. **Image:** is the video thumbnail fine as the recipe image?
+10. **Image:** website image first, otherwise the video thumbnail. Is that OK?
+11. **Strictness:** recipes that fail verification are **not uploaded** and stay in the review queue. Or would you rather they get uploaded with a `To Review` tag?
 
 ---
 
@@ -264,28 +300,35 @@ mealie_pipeline/
   config/
     settings.yaml          # domains allowlist, thresholds, languages, model names
     tag_rules.yaml
+    site_selectors.yaml    # per-site recipe-card CSS selectors
+    units.yaml             # unit synonym table → Mealie units
   src/mealie_pipeline/
-    cli.py                 # `mp discover|fetch|transcribe|extract|tag|parse|upload|report|run --limit 20`
+    cli.py                 # `mp discover|scrape|transcribe|extract|parse|tag|verify|upload|report|run --limit 20`
     db.py                  # SQLite state
-    sources/{youtube,instagram,facebook,website}.py
-    transcribe/{subs,faster_whisper,groq,openai}.py
+    sources/{youtube,instagram,facebook}.py
+    scrape/{links.py,fetch.py,structured.py,plugins.py,fallback_text.py}   # our own website scraper
+    transcribe/{subs,faster_whisper,groq,openai,ocr}.py
     extract/{prompt.py,schema.py,llm.py}
-    mealie/{client.py,foods_units.py,tags.py}
+    parse/{nlp.py,llm.py,reconcile.py,units.py,foods.py}                  # our own ingredient parser
+    tag/{llm.py,rules.py}
+    verify/{checks.py,grounding.py,judge.py,score.py}
+    mealie/{client.py,catalog.py}                                         # storage + tag/food/unit lookup only
     stages/*.py
   data/                    # git-ignored artifacts
-  tests/                   # fixtures: sample captions, transcripts, parser responses
+  tests/                   # saved real pages (HTML fixtures), captions, transcripts; golden recipes for regression
 ```
 
 ---
 
 ## 14. Milestones
 
-1. **M0 (setup):** answer the questions, add tokens to `.env`, run a smoke test against Mealie (`GET /api/app/about`, list tags, parse one ingredient).
-2. **M1 (YouTube pilot):** 10 YouTube videos end-to-end in dry-run, then write to Mealie. You review them in the UI.
-3. **M2 (Instagram and Facebook ingest):** parse the exports or Graph API data, plus cross-platform dedupe. You review the dedupe CSV.
-4. **M3 (full pilot):** 20 mixed videos. Tune the prompt, tag rules and confidence thresholds.
-5. **M4 (full run):** all videos in batches of 50, with a report after each batch.
-6. **M5 (cleanup):** work the review queue, merge duplicate foods (`PUT /api/foods/merge`), remove empty tags.
+1. **M0 (setup):** answer the questions, add tokens to `.env`, run a smoke test against Mealie (`GET /api/app/about`, `/openapi.json`, list tags, foods and units, create and delete a test recipe).
+2. **M1 (scraper and parser first):** build the website scraper and ingredient parser against your example pages. You hand-check about 10 **golden recipes** (correct ingredients, quantities and tags), which become regression tests that every later change must pass.
+3. **M1b (YouTube pilot):** 10 YouTube videos end-to-end in dry-run with verification reports, then write to Mealie. You review them in the UI.
+4. **M2 (Instagram and Facebook ingest):** parse the exports or Graph API data, plus cross-platform dedupe. You review the dedupe CSV.
+5. **M3 (full pilot):** 20 mixed videos. Tune the prompts, tag rules and the verification score threshold.
+6. **M4 (full run):** all videos in batches of 50, with a report after each batch.
+7. **M5 (cleanup):** work the review queue, merge duplicate foods (`PUT /api/foods/merge`), remove empty tags.
 
 ---
 
@@ -294,6 +337,8 @@ mealie_pipeline/
 - Mealie source v3.28.0: `mealie/routes/recipe/recipe_crud_routes.py`, `mealie/routes/parser/ingredient_parser.py`, `mealie/services/recipe/import_workflow/*`, `mealie/services/recipe/recipe_service.py`, `mealie/schema/recipe/*`. https://github.com/mealie-recipes/mealie
 - Mealie AI providers docs: https://mealie.io/documentation/getting-started/installation/ai-providers/
 - Mealie migration guide (v3.23 AI workflow): https://mealie.io/contributors/developers-guide/migration-guide/
+- ingredient-parser-nlp: https://github.com/strangetom/ingredient-parser
+- extruct: https://github.com/scrapinghub/extruct · recipe-scrapers: https://github.com/hhursev/recipe-scrapers
 - Groq speech-to-text: https://console.groq.com/docs/speech-to-text
 - Instagram Media API reference: https://developers.facebook.com/documentation/instagram-platform/reference/instagram-media
 - yt-dlp releases (Instagram extractor rework mid-2026): https://github.com/yt-dlp/yt-dlp/releases
