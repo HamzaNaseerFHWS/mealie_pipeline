@@ -1,0 +1,3 @@
+# A separate pipeline Chrome profile for platform logins
+
+Saved lists are private, so collecting them needs the user's logged-in sessions. yt-dlp has no Instagram or Facebook saved-list extractor, and on Windows Chrome's app-bound cookie encryption breaks `--cookies-from-browser chrome`. So the pipeline launches real Chrome through Playwright (`channel="chrome"`) with its own persistent profile. The user logs in once per platform by hand, and the pipeline exports that profile's cookies to `cookies.txt` for yt-dlp. It never reads the user's everyday Chrome profile, never handles passwords, and stops (never works around it) on a checkpoint or captcha.

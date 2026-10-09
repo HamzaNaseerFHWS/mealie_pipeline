@@ -1,6 +1,6 @@
 # Mealie video recipe pipeline: plan and spec
 
-**Status:** Draft v0.5 (input is your saved lists on YouTube, Instagram and Facebook; own collector, classifier, scraper, parser and verification; Mealie is storage only). Needs answers to the [open questions](#11-open-questions) before build starts.
+**Status:** Design reference v0.6. The build is driven by the spec and tickets in `.scratch/video-recipe-pipeline/` (see `CLAUDE.md`); this document holds the research and design detail they point to (input is your saved lists on YouTube, Instagram and Facebook; own collector, classifier, scraper, parser and verification; Mealie is storage only). Needs answers to the [open questions](#11-open-questions) before build starts.
 **Goal:** Give the pipeline links to your **saved playlists / collections** on YouTube, Instagram and Facebook (about 300 items each). It collects every video URL, keeps only real **recipe** videos (no restaurant ads, places to visit or product promos), and imports them into a self-hosted Mealie instance as clean recipes. Each recipe should have parsed ingredients (quantity, unit and food all linked) and at least one existing tag.
 
 ---
@@ -58,7 +58,9 @@ Its transcripts and AI output weren't good enough in practice either. **Decision
 | AI (classify / extract / parse / tag / verify) | **Your Claude Code subscription (Pro)** through the `claude` CLI. **OpenAI credits only as an emergency fallback**, off by default and capped |
 | Where things run | Pipeline on **your laptop**. Mealie on **another PC**, reached over **Tailscale** |
 | Browser | **Chrome**. The pipeline uses its own Chrome profile, see §3.1 |
-| Languages | **English → English**, **German → German**, **Urdu/Hindi → ingredients in English, recipe text in romanized Urdu/Hindi**. Details in §2c |
+| Languages | **Ingredients are always English** (foods, units and notes), so Mealie's food list and shopping list stay one English list. **Recipe text** (name, description, steps, notes): English → English, German → German, Urdu/Hindi → romanized Urdu/Hindi. Details in §2c |
+| Laptop OS | **Windows** (native Python, not WSL) |
+| Mealie address | `http://mealie.taildce5a6.ts.net:9000` (Tailscale MagicDNS) |
 | Multi-recipe videos | Each recipe in a video is **extracted, checked, tagged and saved on its own**. Details in §6.1 |
 
 ### Local transcription on a GTX 1650 (4 GB VRAM, no tensor cores)
@@ -129,7 +131,7 @@ The language is detected **per recipe**, not per video or channel. Signals are: 
 | Source language | Recipe name and description | Ingredients (food, unit, note) | Instructions and notes | Mealie foods / units |
 |---|---|---|---|---|
 | **English** | English | English | English | English foods and units |
-| **German** | German | **German** ("2 EL Olivenöl", "1 Zwiebel, fein gewürfelt") | German | **German** foods and units ("Zwiebel", "EL", "TL", "Prise", "Bund", "Zehe", "Msp.") |
+| **German** | German | **English** ("2 tbsp olive oil", "1 onion, finely diced"), translated from the German source | German | English foods and units, shared with all recipes |
 | **Urdu / Hindi** | romanized ("Chicken Karahi") plus an optional English subtitle in the description | **English** ("2 tbsp ginger garlic paste", "1 cup yogurt") | **romanized Urdu/Hindi** in Latin script ("Pyaz ko golden hone tak bhoon lein…"), never Devanagari or Nastaliq | English foods and units, shared with English recipes |
 
 **How each part is handled:**
@@ -137,12 +139,13 @@ The language is detected **per recipe**, not per video or channel. Signals are: 
 - **Transcription:** Whisper writes Hindi in Devanagari and Urdu in Nastaliq script. The transcript is kept as-is, because it's the evidence for the grounding check (§9, H3). The **LLM** then writes the romanized text. The grounding check compares in the original script, so romanization can't break it.
 - **Romanization style:** the common "Roman Urdu" spelling that creators use in captions (`pyaz`, `adrak lehsan`, `namak`, `bhoon lein`, `dum par rakhein`). Ingredient names in the steps are **English** too, so the steps match the ingredient list: "Ab chicken daal kar 5 minute bhoonein". The prompt includes a short style guide and examples, which you can edit in `prompts/style_roman_urdu.md`.
 - **Desi ingredient names → English:** a reviewed glossary `config/glossary_desi.yaml` (`haldi → turmeric`, `dhania → coriander`, `kasuri methi → dried fenugreek leaves`, `besan → gram flour`, `dahi → yogurt`, `garam masala → garam masala`, …) is applied first. Where English has no good word, the common name stays (`garam masala`, `chaat masala`, `ghee`, `paneer`). The glossary grows with every reviewed recipe.
-- **German ingredient parsing:** `ingredient-parser-nlp` is English-only, so German lines use the LLM plus a **rule-based German quantity/unit parser** (decimal commas, `½`, `1–2`, and units EL/TL/g/kg/ml/l/Prise/Bund/Zehe/Msp./Becher/Dose/Pck.) as the second engine for the agreement check (§7).
-- **Foods in Mealie:** German recipes get **German food entries**, so ingredients display in German. To avoid duplicates, the English name is stored as an **alias**, and a `glossary_de_en.yaml` keeps the pairs consistent. English and Urdu/Hindi recipes share the English foods.
+- **German ingredients → English:** the extraction call translates each German ingredient line to English ("2 EL Olivenöl" → "2 tbsp olive oil"), converting units to their English equivalents (EL → tbsp, TL → tsp, Prise → pinch, Bund → bunch, Zehe → clove, Msp. → pinch). The original German line is kept in `originalText` and as grounding evidence. After that, German lines go through the same English dual-engine parser as everything else (§7).
+- **Foods in Mealie:** **one English food and unit list** for all recipes, so the shopping list merges correctly. German steps may still name ingredients in German ("Die Zwiebel fein würfeln"), which is fine because the ingredient list is the source of truth for shopping.
 - **Whisper on Urdu/Hindi:** `large-v3-turbo` is weaker on Urdu/Hindi than on English/German. `mp bench-whisper` includes one Urdu/Hindi sample. If quality is poor, the options are:
   - (a) a per-language model choice, for example `large-v3` `int8` for `hi`/`ur`, if it fits in 4 GB on your card
   - (b) prefer YouTube's Hindi/Urdu subtitles when they exist
   - (c) OpenAI transcription for these only, with `--allow-openai`
+- **Grounding for translated lines:** H3 (§9) checks the quote against the source in the source's language, so translation never breaks grounding.
 - **Language tag:** if a matching tag already exists in Mealie (for example "German", "Pakistani", "Indian", "Desi"), it's added by rule. Otherwise it's only suggested.
 
 ---
@@ -423,7 +426,7 @@ All calls use `Authorization: Bearer <MEALIE_TOKEN>` against `MEALIE_URL` (your 
 
 | Step | Call |
 |---|---|
-| Idempotency | Primary key is `extras.item_key` (`platform:video_id#n`), tracked in the local DB together with the Mealie slug. Fallback lookup: `GET /api/recipes?queryFilter=orgURL="<url>"`. If found, update (or skip, per `--mode`). |
+| Idempotency | Primary key is `extras.item_key` (`platform:video_id#n`), tracked in the local DB together with the Mealie slug. Fallback lookup: `GET /api/recipes?queryFilter=org_url="<url>"` (the filter takes the **snake_case** column name; `orgURL` would be decamelized to the wrong name). If found, update (or skip, per `--mode`). |
 | Create shell | `POST /api/recipes` `{ "name": "..." }` → `slug` |
 | Fill | `PATCH /api/recipes/{slug}` with `description`, `recipeServings`, `recipeYield`, `prepTime`/`performTime`/`totalTime`, `recipeIngredient` (`[{quantity, unit:{id,name}, food:{id,name}, note, originalText, title, referenceId}]`), `recipeInstructions` (`[{id,title,summary,text,ingredientReferences}]`), `notes`, `tags` (`[{id,name,slug}]`), `orgURL`, `extras` (`{pipeline_version, platform, video_id, website_url, score, also_on}`) |
 | Image | Website image if it exists, otherwise the video thumbnail: `PUT /api/recipes/{slug}/image` (multipart upload of the local file, so no Mealie-side scraping) |
@@ -440,19 +443,20 @@ Exact camelCase field names are checked against your instance's `/openapi.json` 
 
 Answered: Instagram = all posts · logged-in browser OK · partial recipes, drinks and multi-recipe splitting included · pilot on one of your collections · GTX 1650 + Claude Pro, OpenAI only as an emergency fallback · Mealie on another PC over Tailscale · Chrome · languages per §2c.
 
-Still open:
+Also answered: Windows · Mealie at `http://mealie.taildce5a6.ts.net:9000` · English ingredients for every language · romanization style: planner's choice.
 
-1. **The pilot collection link**, whenever you're ready.
-2. **Laptop OS:** Windows, Linux or macOS? This affects the CUDA install and how `mp login` opens Chrome.
-3. **Mealie address:** what's the Tailscale name or IP and port of the Mealie PC (for example `http://mealie-pc:9000`)? Mealie's `BASE_URL` doesn't matter for the API, but links in the report use whatever you give me.
-4. **German foods:** OK to create German food entries (with English aliases) so German recipes display in German? The alternative is one shared English food list, but then German recipes would show "onion" instead of "Zwiebel".
-5. **Roman Urdu/Hindi examples:** if you have 2–3 captions written in the romanization style you like, send them and they become the style examples in the prompt.
-6. **Foods and units:** is it OK to auto-create missing foods and units in Mealie (logged to CSV), or should unknown ones go to a review list first?
-7. **Tags:** is it OK to add a `To Review` tag for uncertain recipes? Should the pipeline also set **categories** and **tools**, or only tags? Is it allowed to *suggest* new tags?
-8. **Mealie version:** which version are you running (Settings → About)? It's needed only for API field names, since nothing of Mealie's AI or parser is used.
-9. **Existing recipes:** are some of these videos already imported (badly)? Should the pipeline **update** them (matched by `orgURL`) or skip them?
-10. **Image:** website image first, otherwise the video thumbnail. Is that OK?
-11. **Strictness:** recipes that fail verification are **not uploaded** and stay in the review queue. Or would you rather they get uploaded with a `To Review` tag?
+**Defaults the build uses until you say otherwise** (each is a config switch; confirming them is the HITL ticket "Confirm run defaults before the full run" on the wayfinder map):
+
+| # | Question | Default |
+|---|---|---|
+| 6 | Auto-create missing foods/units? | **Yes**, English only, logged to `created_foods.csv` / `created_units.csv` |
+| 7 | Tags | Tags only (no categories or tools in v1). The pipeline creates exactly one tag of its own, `To Review`. New tag ideas go to `suggested_tags.csv` and are never created automatically |
+| 8 | Mealie version | Read by `scripts/check_mealie.py` / `mp doctor` |
+| 9 | Recipes already in Mealie | **Skip** (`--mode skip`). `--mode update` overwrites recipes the pipeline created before |
+| 10 | Image | Website image, otherwise the frame at the recipe's start (multi-recipe) or the video thumbnail |
+| 11 | Recipes failing verification | **Not uploaded**, kept in the review queue. Score 60–79 uploads with `To Review` |
+
+Still open: the pilot collection link, and running `scripts/check_mealie.py` on the laptop (both are HITL tickets on the map).
 
 ---
 
@@ -488,7 +492,7 @@ mealie_pipeline/
     classify_rules.yaml    # pro/anti recipe keyword signals
     tag_rules.yaml
     glossary_desi.yaml     # Urdu/Hindi ingredient names → English
-    glossary_de_en.yaml    # German ↔ English food pairs (aliases)
+    glossary_de_en.yaml    # German → English ingredient/unit names used when translating lines
     site_selectors.yaml    # per-site recipe-card CSS selectors
     units.yaml             # unit synonym table → Mealie units
   src/mealie_pipeline/
@@ -504,7 +508,7 @@ mealie_pipeline/
     extract/{prompt.py,schema.py}
   prompts/                 # system prompts per stage (classify.md, outline.md, extract.md, judge.md, style_roman_urdu.md)
   schemas/                 # JSON schemas passed to --json-schema
-    parse/{nlp_en.py,rules_de.py,llm.py,reconcile.py,units.py,foods.py}                  # our own ingredient parser
+    parse/{nlp_en.py,llm.py,reconcile.py,units.py,foods.py}                  # our own ingredient parser
     tag/{llm.py,rules.py}
     verify/{checks.py,grounding.py,judge.py,score.py}
     mealie/{client.py,catalog.py}                                         # storage + tag/food/unit lookup only

@@ -1,0 +1,22 @@
+# secrets and personal data
+.env
+cookies*.txt
+secrets/
+mealie_check_report.json
+
+# pipeline artifacts
+data/
+work/
+review/
+reports/
+*.db
+*.db-journal
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/

@@ -1,0 +1,3 @@
+# LLM calls go through `claude -p` on the user's Claude Pro subscription
+
+The user has a Claude Pro subscription and no Anthropic API key, and wants to spend OpenAI credits only in emergencies. Every LLM call therefore shells out to the Claude Code CLI in print mode (`claude -p --output-format json --json-schema … --tools "" --safe-mode --no-session-persistence`), behind one `LLMBackend` interface. Consequences: calls are slow (process start-up), usage limits pause the run (the queue must survive that), and `--bare` must never be used because it ignores the subscription login. OpenAI is a second backend behind the same interface, enabled only by `--allow-openai` and capped by `OPENAI_MAX_USD`.
