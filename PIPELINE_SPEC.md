@@ -1,6 +1,6 @@
 # Mealie video recipe pipeline: plan and spec
 
-**Status:** Draft v0.4 (input is your saved lists on YouTube, Instagram and Facebook; own collector, classifier, scraper, parser and verification; Mealie is storage only). Needs answers to the [open questions](#11-open-questions) before build starts.
+**Status:** Draft v0.5 (input is your saved lists on YouTube, Instagram and Facebook; own collector, classifier, scraper, parser and verification; Mealie is storage only). Needs answers to the [open questions](#11-open-questions) before build starts.
 **Goal:** Give the pipeline links to your **saved playlists / collections** on YouTube, Instagram and Facebook (about 300 items each). It collects every video URL, keeps only real **recipe** videos (no restaurant ads, places to visit or product promos), and imports them into a self-hosted Mealie instance as clean recipes. Each recipe should have parsed ingredients (quantity, unit and food all linked) and at least one existing tag.
 
 ---
@@ -40,7 +40,7 @@ Its transcripts and AI output weren't good enough in practice either. **Decision
 - **Dry-run mode** runs the whole pipeline and writes the final JSON without touching Mealie.
 - **Start with a pilot of 20 videos** (a mix of platforms), check the results in the Mealie UI, tune, then run the rest.
 
-**Stack:** Python 3.12, `uv`, `httpx`, **Playwright** (headless Chromium for JS-heavy pages and link-in-bio pages), `selectolax` / `trafilatura` (HTML → clean text), `extruct` + `recipe-scrapers` (structured data), `pydantic` v2, `yt-dlp` (+ `curl_cffi`), `faster-whisper`, `ingredient-parser-nlp`, `rapidfuzz`, `typer` CLI, `sqlite3`. Runs on **the same PC as Mealie**, so the API is just `http://localhost:9000`.
+**Stack:** Python 3.12, `uv`, `httpx`, **Playwright** (headless Chromium for JS-heavy pages and link-in-bio pages), `selectolax` / `trafilatura` (HTML → clean text), `extruct` + `recipe-scrapers` (structured data), `pydantic` v2, `yt-dlp` (+ `curl_cffi`), `faster-whisper`, `ingredient-parser-nlp`, `rapidfuzz`, `typer` CLI, `sqlite3`. Runs on **your laptop** (GTX 1650, Chrome). Mealie runs on **another PC on your Tailscale network**, reached at `MEALIE_URL=http://<mealie-pc>.<tailnet>.ts.net:9000` (MagicDNS name or `100.x.y.z` Tailscale IP).
 
 ---
 
@@ -55,7 +55,11 @@ Its transcripts and AI output weren't good enough in practice either. **Decision
 | What gets imported | `recipe` **and** `recipe_partial` (sauces, techniques), **drinks/cocktails count as recipes**, and **compilations are split** into one Mealie recipe per dish (see §6) |
 | First test | We run the pipeline **together on one of your collections** (you'll send the link). That collection becomes the pilot and the source of the first test cases |
 | Transcription | **Local on your GTX 1650** (free), see below |
-| AI (classify / extract / parse / tag / verify) | **Your Claude Code subscription** through the `claude` CLI. **OpenAI credits only as an emergency fallback**, off by default and capped |
+| AI (classify / extract / parse / tag / verify) | **Your Claude Code subscription (Pro)** through the `claude` CLI. **OpenAI credits only as an emergency fallback**, off by default and capped |
+| Where things run | Pipeline on **your laptop**. Mealie on **another PC**, reached over **Tailscale** |
+| Browser | **Chrome**. The pipeline uses its own Chrome profile, see §3.1 |
+| Languages | **English → English**, **German → German**, **Urdu/Hindi → ingredients in English, recipe text in romanized Urdu/Hindi**. Details in §2c |
+| Multi-recipe videos | Each recipe in a video is **extracted, checked, tagged and saved on its own**. Details in §6.1 |
 
 ### Local transcription on a GTX 1650 (4 GB VRAM, no tensor cores)
 
@@ -102,11 +106,44 @@ The result is in `.structured_output` of the JSON response, already validated ag
   - Extraction, LLM ingredient parsing and tag selection happen in **one** Sonnet call per recipe.
   - Verification (LLM judge) is a second call, made only when the deterministic checks pass. That's about **2–3 calls per recipe**.
   - With ~300–600 recipes, the full run is spread over a few days of normal subscription limits. That's fine because `mp run` can be left running and resumes on its own.
-- **Concurrency:** 1–2 parallel `claude -p` processes (configurable).
+- **Concurrency:** 1 `claude -p` process at a time (Pro), configurable.
+- **Claude Pro specifics:**
+  - Pro has the smallest usage allowance, and `claude -p` runs share it with your normal Claude Code / claude.ai use. So `mp run` has a `--window night` option that only sends AI calls in hours you choose, and it backs off as soon as a limit message appears.
+  - **Usage-saving mode** is on by default for Pro:
+    - Haiku is used for classification, and for the LLM ingredient parse of recipes that come from structured website data. That's the easy case, so most lines are already settled by the local parser.
+    - The LLM judge (S7) is skipped for recipes that scored ≥ 90 on the deterministic checks.
+    - Sonnet is used where accuracy matters: extraction from transcripts, multi-recipe splitting, Urdu/Hindi romanization.
+    - The "retry with Opus" step becomes "retry with Sonnet at `--effort high`" unless Opus is available on your plan.
+  - The pilot measures usage per recipe, so we'll know how many recipes fit in a 5-hour window before the full run. Expect the full run to take **several days to about a week**, unattended. Stages that don't need AI (collecting, scraping, transcribing) run at full speed in the meantime.
 - **Terms of use:** this is personal, local, low-volume use of your own subscription through the official CLI. Anthropic's rules for scripted/Agent SDK use of subscriptions have been changing in 2026, so check the current Claude Code usage policy before the full run. If scripted use ever needs an API key, the backend switches to `ANTHROPIC_API_KEY` by changing config only.
 - **Emergency fallback: OpenAI** (`backend: openai` for a single stage or item). It's only used when `--allow-openai` is passed, with a hard spend cap (`OPENAI_MAX_USD`, default $2) tracked in the SQLite DB. Every OpenAI call is logged in the report.
 
 The backend is an interface (`llm.complete(prompt, schema, model_tier)`), so stages don't know or care which provider answered.
+
+---
+
+## 2c. Languages (English, German, Urdu/Hindi)
+
+The language is detected **per recipe**, not per video or channel. Signals are: Whisper's language detection on the audio, the caption script (Latin / Devanagari / Nastaliq), and the website's `inLanguage` / `<html lang>`. Code-mixed Hinglish/Urdu-English is common, and is treated as Urdu/Hindi when the spoken instructions are mainly Urdu/Hindi.
+
+| Source language | Recipe name and description | Ingredients (food, unit, note) | Instructions and notes | Mealie foods / units |
+|---|---|---|---|---|
+| **English** | English | English | English | English foods and units |
+| **German** | German | **German** ("2 EL Olivenöl", "1 Zwiebel, fein gewürfelt") | German | **German** foods and units ("Zwiebel", "EL", "TL", "Prise", "Bund", "Zehe", "Msp.") |
+| **Urdu / Hindi** | romanized ("Chicken Karahi") plus an optional English subtitle in the description | **English** ("2 tbsp ginger garlic paste", "1 cup yogurt") | **romanized Urdu/Hindi** in Latin script ("Pyaz ko golden hone tak bhoon lein…"), never Devanagari or Nastaliq | English foods and units, shared with English recipes |
+
+**How each part is handled:**
+
+- **Transcription:** Whisper writes Hindi in Devanagari and Urdu in Nastaliq script. The transcript is kept as-is, because it's the evidence for the grounding check (§9, H3). The **LLM** then writes the romanized text. The grounding check compares in the original script, so romanization can't break it.
+- **Romanization style:** the common "Roman Urdu" spelling that creators use in captions (`pyaz`, `adrak lehsan`, `namak`, `bhoon lein`, `dum par rakhein`). Ingredient names in the steps are **English** too, so the steps match the ingredient list: "Ab chicken daal kar 5 minute bhoonein". The prompt includes a short style guide and examples, which you can edit in `prompts/style_roman_urdu.md`.
+- **Desi ingredient names → English:** a reviewed glossary `config/glossary_desi.yaml` (`haldi → turmeric`, `dhania → coriander`, `kasuri methi → dried fenugreek leaves`, `besan → gram flour`, `dahi → yogurt`, `garam masala → garam masala`, …) is applied first. Where English has no good word, the common name stays (`garam masala`, `chaat masala`, `ghee`, `paneer`). The glossary grows with every reviewed recipe.
+- **German ingredient parsing:** `ingredient-parser-nlp` is English-only, so German lines use the LLM plus a **rule-based German quantity/unit parser** (decimal commas, `½`, `1–2`, and units EL/TL/g/kg/ml/l/Prise/Bund/Zehe/Msp./Becher/Dose/Pck.) as the second engine for the agreement check (§7).
+- **Foods in Mealie:** German recipes get **German food entries**, so ingredients display in German. To avoid duplicates, the English name is stored as an **alias**, and a `glossary_de_en.yaml` keeps the pairs consistent. English and Urdu/Hindi recipes share the English foods.
+- **Whisper on Urdu/Hindi:** `large-v3-turbo` is weaker on Urdu/Hindi than on English/German. `mp bench-whisper` includes one Urdu/Hindi sample. If quality is poor, the options are:
+  - (a) a per-language model choice, for example `large-v3` `int8` for `hi`/`ur`, if it fits in 4 GB on your card
+  - (b) prefer YouTube's Hindi/Urdu subtitles when they exist
+  - (c) OpenAI transcription for these only, with `--allow-openai`
+- **Language tag:** if a matching tag already exists in Mealie (for example "German", "Pakistani", "Indian", "Desi"), it's added by rule. Otherwise it's only suggested.
 
 ---
 
@@ -130,11 +167,12 @@ These are **saved** lists, so most of the videos come from **other creators**. S
 
 | Platform | Primary collector | Fallback | Notes |
 |---|---|---|---|
-| **YouTube** | `yt-dlp --flat-playlist -J <playlist url>`. Fast, and returns id, title, channel, duration and URL for every item. Private playlists, **Watch Later (`list=WL`)** and **Liked (`list=LL`)** need `--cookies-from-browser firefox` (or a `cookies.txt`). | YouTube Data API v3 `playlistItems.list` with OAuth (works for your own private playlists, but **not** Watch Later). | Most reliable of the three. |
+| **YouTube** | `yt-dlp --flat-playlist -J <playlist url>`. Fast, and returns id, title, channel, duration and URL for every item. Private playlists, **Watch Later (`list=WL`)** and **Liked (`list=LL`)** need cookies. They come from the pipeline's own Chrome profile (below), exported as `cookies.txt`. | YouTube Data API v3 `playlistItems.list` with OAuth (works for your own private playlists, but **not** Watch Later). | Most reliable of the three. |
 | **Instagram** | **Our own Playwright collector:** opens the collection URL in a **persistent browser profile** where you've logged in once, scrolls until no new tiles load, and harvests every `/p/<code>/` and `/reel/<code>/` link. Throttled to human speed (random scroll pauses of 1.5–4 s), capped per session, and it resumes where it left off. | (a) **Data export** (Accounts Center → Download your information → JSON → "Saved"), which contains saved posts and collections with their links. This is the safest route: no automation on your account. The exact file layout is confirmed on your first export. (b) `instaloader --login <you> :saved` (all saved posts, without per-collection grouping). | **yt-dlp can't list saved collections** (confirmed in the yt-dlp 2026.08.19 source: no saved/collection extractor). It *can* download each single `/reel/…` URL with your cookies, which stage 1 uses. |
 | **Facebook** | **Our own Playwright collector** on `facebook.com/saved` / the collection page, scroll and harvest `/reel/<id>`, `/watch/?v=`, `/<page>/videos/<id>` and `fb.watch/…` links (expanded). | **Data export** "Saved items and collections" (JSON). | yt-dlp has no saved-items extractor either. Single `/reel/<id>` and video URLs work with cookies. |
 
-**Login and session handling (Instagram and Facebook):**
+**Login and session handling (YouTube, Instagram, Facebook), Chrome:**
+- The pipeline does **not** read cookies from your everyday Chrome profile. On Windows, Chrome's app-bound cookie encryption breaks `yt-dlp --cookies-from-browser chrome`, and touching your main profile is risky anyway. Instead, Playwright launches **real Chrome** (`channel="chrome"`) with a **separate, persistent pipeline profile**. You log in to YouTube, Instagram and Facebook there **once**.
 - `mp login instagram` / `mp login facebook` opens a **visible** Chromium window. You log in yourself, including 2FA, and the session is stored in `secrets/browser_profile/`. The pipeline never sees or stores your password.
 - The same profile is exported to `cookies.txt` for yt-dlp in stage 1.
 - If the session expires or a checkpoint/captcha appears, the collector **stops and asks you** to run `mp login` again. It never tries to get around it.
@@ -299,7 +337,21 @@ Rules: **never invent quantities** (unstated means `to taste` / `quantity_stated
 
 **Model:** Claude Sonnet via `claude -p --model sonnet --json-schema …` on your subscription (§2b). The same call also does the LLM ingredient parse (§7) and tag selection (§8), to save usage. A retry with `--model opus` is used for recipes that fail verification.
 
-**Compilations** ("5 meal-prep lunches", "3 sauces for pasta"): the schema's top level is `recipes: list[ExtractedRecipe]`. Each dish becomes its **own** Mealie recipe, sharing the same `orgURL` plus a `#<n>` suffix in `extras.part`, and each one gets its own evidence, verification and tags.
+### 6.1 Multi-recipe videos (each recipe handled on its own)
+
+Some videos contain several recipes: "5 meal-prep lunches", "3 chutneys", or a main dish plus a sauce or side. **Each one becomes its own Mealie recipe and goes through every later stage independently.**
+
+1. **Detect.** The extraction call first returns a **recipe outline**: `recipes: [{title, start_ts, end_ts, website_url?}]`. The signals it uses are YouTube chapters, numbered lists in the caption ("1️⃣ … 2️⃣ …"), several links to different website recipes, and spoken transitions ("next up…", "doosri recipe…"). The outline is checked against the transcript timestamps, so segments can't overlap or go beyond the video length.
+2. **Segment.** Each recipe gets **only its own slice** of the sources: its transcript segment (by timestamps), its caption block, and its own website page if one exists. Shared intro/outro text is given to all of them as context, but marked as shared.
+3. **Extract, parse, tag and verify separately.** Each recipe gets its own extraction call, evidence, ingredient parse, tags and verification score. **Grounding (H3) only accepts quotes from that recipe's own segment**, which stops ingredients leaking from one dish into another.
+4. **Independent outcome.** One recipe failing verification doesn't block the others. Each part has its own row in the DB (`item_key = platform:video_id#<n>`), its own status and its own review entry.
+5. **Upload.** Each part is a separate Mealie recipe:
+   - `orgURL` is the video URL **with the timestamp** of that recipe (`…watch?v=ID&t=754s` on YouTube, the plain URL elsewhere). This keeps it unique per part.
+   - `extras`: `{video_key, part: 2, of: 5, siblings: [slugs]}`.
+   - A note links the sibling recipes ("Also in this video: Mint Chutney, Tamarind Chutney").
+   - **Image:** the website image if there is one, otherwise a **frame grabbed at that recipe's start time** (`ffmpeg -ss <start_ts> -frames:v 1`), so the 3 chutneys don't all get the same thumbnail.
+6. **Sub-recipes:** "biryani + raita served with it" counts as 2 recipes. A component used *inside* the main dish ("for the marinade") stays a **section** of one recipe, not a separate recipe. The prompt explains the difference with examples.
+7. **Dedupe and idempotency** work per part (`video_key#n`), so re-runs update the right recipe, and a part saved separately elsewhere (for example the chutney also posted on its own) is matched to its own recipe.
 
 ---
 
@@ -367,11 +419,11 @@ Output: `verify.json` (each check, pass/fail, details) is kept with the recipe.
 
 ## 10. Stage 6–7: Upload to Mealie, read-back, review
 
-All calls use `Authorization: Bearer <MEALIE_TOKEN>` against `MEALIE_URL` (for example `http://localhost:9000`).
+All calls use `Authorization: Bearer <MEALIE_TOKEN>` against `MEALIE_URL` (your Mealie PC over Tailscale, for example `http://mealie-pc.tailXXXX.ts.net:9000`). Timeouts and retries are set for network calls, and image uploads are retried on connection drops.
 
 | Step | Call |
 |---|---|
-| Idempotency | `GET /api/recipes?queryFilter=orgURL="<url>"`. If found, update (or skip, per `--mode`). |
+| Idempotency | Primary key is `extras.item_key` (`platform:video_id#n`), tracked in the local DB together with the Mealie slug. Fallback lookup: `GET /api/recipes?queryFilter=orgURL="<url>"`. If found, update (or skip, per `--mode`). |
 | Create shell | `POST /api/recipes` `{ "name": "..." }` → `slug` |
 | Fill | `PATCH /api/recipes/{slug}` with `description`, `recipeServings`, `recipeYield`, `prepTime`/`performTime`/`totalTime`, `recipeIngredient` (`[{quantity, unit:{id,name}, food:{id,name}, note, originalText, title, referenceId}]`), `recipeInstructions` (`[{id,title,summary,text,ingredientReferences}]`), `notes`, `tags` (`[{id,name,slug}]`), `orgURL`, `extras` (`{pipeline_version, platform, video_id, website_url, score, also_on}`) |
 | Image | Website image if it exists, otherwise the video thumbnail: `PUT /api/recipes/{slug}/image` (multipart upload of the local file, so no Mealie-side scraping) |
@@ -386,18 +438,18 @@ Exact camelCase field names are checked against your instance's `/openapi.json` 
 
 ## 11. Open questions
 
-Answered: Instagram = all posts · logged-in browser OK · partial recipes, drinks and split compilations included · pilot on one of your collections (link to come) · GTX 1650 + Claude Code subscription, OpenAI only as an emergency fallback.
+Answered: Instagram = all posts · logged-in browser OK · partial recipes, drinks and multi-recipe splitting included · pilot on one of your collections · GTX 1650 + Claude Pro, OpenAI only as an emergency fallback · Mealie on another PC over Tailscale · Chrome · languages per §2c.
 
 Still open:
 
 1. **The pilot collection link**, whenever you're ready.
-2. **Machine and OS:** is Mealie on the **same laptop** as the GTX 1650, or on another PC? Windows, Linux or macOS? On Windows, I'd run the pipeline natively with Python (CUDA works there) rather than in WSL, because the browser login is easier.
-3. **Language:** what language are the videos in, and what language should the recipes be stored in?
-4. **Browser:** which browser are you normally logged in to YouTube with (for Watch Later/Liked cookies)?
-5. **Claude plan:** Pro or Max? This only changes how fast the run goes before usage limits pause it.
+2. **Laptop OS:** Windows, Linux or macOS? This affects the CUDA install and how `mp login` opens Chrome.
+3. **Mealie address:** what's the Tailscale name or IP and port of the Mealie PC (for example `http://mealie-pc:9000`)? Mealie's `BASE_URL` doesn't matter for the API, but links in the report use whatever you give me.
+4. **German foods:** OK to create German food entries (with English aliases) so German recipes display in German? The alternative is one shared English food list, but then German recipes would show "onion" instead of "Zwiebel".
+5. **Roman Urdu/Hindi examples:** if you have 2–3 captions written in the romanization style you like, send them and they become the style examples in the prompt.
 6. **Foods and units:** is it OK to auto-create missing foods and units in Mealie (logged to CSV), or should unknown ones go to a review list first?
 7. **Tags:** is it OK to add a `To Review` tag for uncertain recipes? Should the pipeline also set **categories** and **tools**, or only tags? Is it allowed to *suggest* new tags?
-8. **Mealie version and setup:** which version are you running (Settings → About), and is it on Docker at `localhost:9000`? (Needed only for API field names, since nothing of Mealie's AI or parser is used.)
+8. **Mealie version:** which version are you running (Settings → About)? It's needed only for API field names, since nothing of Mealie's AI or parser is used.
 9. **Existing recipes:** are some of these videos already imported (badly)? Should the pipeline **update** them (matched by `orgURL`) or skip them?
 10. **Image:** website image first, otherwise the video thumbnail. Is that OK?
 11. **Strictness:** recipes that fail verification are **not uploaded** and stay in the review queue. Or would you rather they get uploaded with a `To Review` tag?
@@ -410,7 +462,7 @@ Still open:
 |---|---|---|
 | Saved lists | A list of your saved-list URLs (YouTube playlists incl. `WL`/`LL`, Instagram collections, Facebook saved collections) in `config/sources.yaml` | — |
 | Browser login (IG/FB, private YT) | `mp login instagram` / `mp login facebook` / `mp login youtube`, a one-time manual login in a visible browser. The session is stored locally in `secrets/browser_profile/` and exported to `cookies.txt` for yt-dlp | `BROWSER_PROFILE_DIR`, `YTDLP_COOKIES` |
-| Mealie API token | Mealie → your profile → **API Tokens** → create (or `POST /api/users/api-tokens`) | `MEALIE_URL`, `MEALIE_TOKEN` |
+| Mealie API token | Mealie → your profile → **API Tokens** → create. `MEALIE_URL` is the Mealie PC's Tailscale name/IP + port. `mp doctor` checks that it's reachable from the laptop | `MEALIE_URL`, `MEALIE_TOKEN` |
 | YouTube | Nothing for public videos. Optional: Google Cloud project → enable YouTube Data API v3 → API key | `YOUTUBE_API_KEY` (opt.) |
 | Instagram (optional fallback) | **Download your information** → JSON → include "Saved". Used if the browser collector gets blocked | `IG_EXPORT_DIR` |
 | Facebook (optional fallback) | **Download your information** → JSON → "Saved items and collections" | `FB_EXPORT_DIR` |
@@ -435,6 +487,8 @@ mealie_pipeline/
     settings.yaml          # thresholds, rate limits, languages, model names
     classify_rules.yaml    # pro/anti recipe keyword signals
     tag_rules.yaml
+    glossary_desi.yaml     # Urdu/Hindi ingredient names → English
+    glossary_de_en.yaml    # German ↔ English food pairs (aliases)
     site_selectors.yaml    # per-site recipe-card CSS selectors
     units.yaml             # unit synonym table → Mealie units
   src/mealie_pipeline/
@@ -448,9 +502,9 @@ mealie_pipeline/
     transcribe/{subs,faster_whisper,openai_fallback,ocr}.py
     llm/{base.py,claude_cli.py,openai_fallback.py,ratelimit.py}         # claude -p backend + emergency fallback
     extract/{prompt.py,schema.py}
-  prompts/                 # system prompts per stage (classify.md, extract.md, judge.md)
+  prompts/                 # system prompts per stage (classify.md, outline.md, extract.md, judge.md, style_roman_urdu.md)
   schemas/                 # JSON schemas passed to --json-schema
-    parse/{nlp.py,llm.py,reconcile.py,units.py,foods.py}                  # our own ingredient parser
+    parse/{nlp_en.py,rules_de.py,llm.py,reconcile.py,units.py,foods.py}                  # our own ingredient parser
     tag/{llm.py,rules.py}
     verify/{checks.py,grounding.py,judge.py,score.py}
     mealie/{client.py,catalog.py}                                         # storage + tag/food/unit lookup only
