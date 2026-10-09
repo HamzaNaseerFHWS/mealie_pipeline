@@ -32,7 +32,7 @@ Every decision needed to **build and run** the pipeline over all of the user's S
 
 ## Not yet specified
 
-- **Rule-tag mapping:** which of the user's actual Mealie tags rule-based tagging targets (vegetarian, quick, drinks, cuisine). Graduates once "Run the Mealie API check on the laptop" returns the tag list. It's folded into "Confirm run defaults before the full run" question 6.
+- **Rule-tag mapping:** which of the user's actual Mealie tags rule-based tagging targets (vegetarian, quick, drinks, cuisine). Graduates once "Run the Mealie API check on the laptop" returns the tag list. It's folded into "Confirm run defaults before the full run" question 6, which now waits on [Which existing tags do we keep, and which new tags does the collection need?](issues/20-tag-taxonomy-review.md). That ticket runs after the Saved Lists are enumerated and before any upload, and decides the final tag set, including new cuisines, ingredient types and difficulty.
 - **Per-language Whisper model:** whether Urdu/Hindi needs a different model than `large-v3-turbo`. Graduates after the benchmark runs on the laptop with an Urdu/Hindi sample (implementation ticket "Benchmark and choose the Whisper model on the laptop").
 - **Classifier calibration:** the confidence threshold and rule weights that reach ≥ 95 % on the pilot. Graduates when the pilot list is known and the classifier exists (implementation ticket "Calibrate the classifier on the pilot list").
 

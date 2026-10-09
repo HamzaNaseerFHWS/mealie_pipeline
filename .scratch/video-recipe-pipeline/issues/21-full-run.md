@@ -2,7 +2,7 @@
 
 **What to build:** A `mp run --all` mode that syncs every registered list and processes everything in batches of 50 (configurable). After each batch it writes `reports/report.html` and a batch summary (uploaded, upload-with-review, Review Queue, skipped by label, created foods/units, usage). It ends with cleanup hints: empty Foods/Tags in Mealie, likely duplicate Foods (fuzzy ≥ 95), and pending `suggested_tags.csv` entries. Then the user starts the real full run.
 
-**Blocked by:** 10, 11, 12, 15, 16, 17, 18, 20, 22; wayfinder ticket `19-confirm-run-defaults.md`
+**Blocked by:** 10, 11, 12, 15, 16, 17, 18, 20, 22; wayfinder tickets `19-confirm-run-defaults.md` and `20-tag-taxonomy-review.md`
 
 **Status:** ready-for-agent
 

@@ -49,7 +49,8 @@ Always start the lowest-numbered ticket whose blockers are finished (`done` for 
          └─ 08 ─ 09 ─ 10
 22 (skip recipes already in Mealie): after 03, 04. Needed before 18, 19, 21
 19 (you + agent): after 07, 13, 14, 22, W13, W14
-21: after 10, 11, 12, 15, 16, 17, 18, 20 and W19 (confirm run defaults with you)
+W20 (you + agent): after W13, and after 04, 15, 16 are done and every list is synced. Decide the final tag set (existing, new, difficulty) before any upload
+21: after 10, 11, 12, 15, 16, 17, 18, 20 and W19 (confirm run defaults with you), W20 (tag taxonomy review)
 ```
 
 Tickets that can run in parallel once 03 is done: 04, 06 and 08, plus 07 and 13 once their research tickets (W17, W18) are resolved. Parallel sessions claim a ticket by committing `Status: in-progress` first. If two sessions edit the same module, run them one after the other instead.

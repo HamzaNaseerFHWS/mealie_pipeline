@@ -24,3 +24,15 @@ Does the Mealie instance accept a token-authenticated write of a fully parsed, t
 ## Answer
 
 _pending_
+
+## Comments
+
+### Partial evidence, 2026-10-10 (does not resolve this ticket)
+
+A token was created at *Profile → API Tokens* and a recipe was written by hand over Tailscale, without `scripts/check_mealie.py`. Results:
+
+- Reachable at `http://mealie.taildce5a6.ts.net:9000`; **version v3.22.0** (ticket 03 was written from v3.28.0 source).
+- Token valid (`GET /api/users/self`), create + PATCH of a recipe with `orgURL` and fully structured ingredients (quantity, unit, food, note) works and reads back correctly.
+- Still unverified, so this stays open: tags, `extras`, the `org_url` search, image upload, delete, and the catalog and per-site recipe counts that `check_mealie.py --write-test` reports.
+- A leftover test recipe `chatpata-bhindi-aloo` and some new foods/units are in the instance; details are in the Comments of implementation ticket 01. Delete the recipe before reading the existing-recipe counts for ticket 22.
+- Gotchas found are written up in ticket 01's Comments (`abbreviation` must be `""` not null; catalog names need case-insensitive matching).

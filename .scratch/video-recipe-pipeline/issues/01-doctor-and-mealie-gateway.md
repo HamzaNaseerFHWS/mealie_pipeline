@@ -34,3 +34,18 @@ It exits non-zero if a required check fails, with a one-line fix hint per failur
 - [ ] ruff, pyright and pytest all pass.
 
 **Manual check on the laptop (user):** put the real values in `.env`, run `uv run mp doctor`, and paste the output into this ticket's Comments. Optional: run the live contract suite against a throwaway Mealie container of the same version as your instance.
+
+## Comments
+
+### Live findings from a hand-run smoke test against the real instance (2026-10-10)
+
+Run from a Windows box over Tailscale with a user token, by hand (PowerShell), before this ticket is built. Evidence for the gateway and its contract suite; none of it changes the acceptance criteria above, but the live-run and `FakeMealie` behaviour should match it.
+
+- **Instance version is v3.22.0** (`GET /api/app/about`), not v3.28.0. Wayfinder ticket 03 was written from v3.28.0 source. The calls below all worked on v3.22.0, but `doctor` should report the version and the live contract run should be done against a container of the user's version (v3.22.0), as the ticket already suggests.
+- **Verified working on the real instance:** Bearer auth with `GET /api/users/self`; `POST /api/recipes {"name"}` returns the slug; `GET` the recipe, set fields on it, and `PATCH /api/recipes/{slug}` with the whole object back works; `orgURL`, `prepTime`, `performTime`, `recipeYield`, `description` persist.
+- **Structured ingredients verified:** `recipeIngredient` items of `{quantity, unit:{id,name}, food:{id,name}, note, originalText, referenceId}` read back correctly (quantity, unit, food, note). Ingredients with no unit send `unit: null`; ingredients with no quantity (e.g. "salt, to taste") send `quantity: 0`.
+- **`POST /api/units` rejects `abbreviation: null`** with 422 (`string_type`). `create_unit(name, abbreviation?)` must send `""` when there is no abbreviation. `FakeMealie` should reject null the same way, and the contract suite should cover creating a unit without an abbreviation.
+- **Catalog names are not normalised.** The real catalog already had `Salt` (capital S) while the pipeline's name was `salt`. Lookups must be case-insensitive on name and plural name, and units should also match on abbreviation (`tbsp` = `tablespoon`). Exact-match lookup would have created duplicates. Unit Normalizer in ticket 09 depends on this.
+- Spelling choice: the live catalog uses `okra` (the video called it "lady finger / bhindi"). The original name went into the ingredient `note`.
+- **Side effects left on the live instance by the test:** recipe `chatpata-bhindi-aloo` (source: youtube.com/watch?v=de1ppj9L4Hk), foods `cumin seeds`, `green chilli`, `turmeric powder`, `Kashmiri red chilli powder`, `cumin powder`, `dry mango powder`, `kasuri methi`, `fresh coriander`, and unit `handful`. Ticket 22's existing-recipe count and `GET /api/foods/empty` will see these.
+- Not tested: tags, images (file and URL), `org_url` queryFilter lookup, `DELETE`.

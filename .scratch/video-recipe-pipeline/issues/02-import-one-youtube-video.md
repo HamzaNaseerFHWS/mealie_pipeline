@@ -37,3 +37,18 @@ The full Gate, the second parse engine, rule tags, multi-recipe and languages co
 - [ ] `--dry-run` writes the payload JSON under `work/` and makes no Mealie writes.
 
 **Manual check on the laptop (user):** `uv run mp add <a YouTube recipe video with ingredients in its description>` then `uv run mp run`. Open the recipe in Mealie and confirm the ingredients show amount, unit and food, and that it has a tag. Paste the Mealie link into Comments.
+
+## Comments
+
+### Live evidence for the Food Matcher / Unit Normalizer (hand-run, 2026-10-10, Mealie v3.22.0)
+
+A hand-built structured ingredient list was written to the real instance (recipe `chatpata-bhindi-aloo`, 18 lines) by looking each unit and food up in the existing Catalog first and creating only what was missing. It confirms the order this ticket already specifies, and sharpens a few points:
+
+- **Reuse first, create last.** Each line resolved against the fetched Catalog (`perPage=-1`); `POST /api/foods` / `POST /api/units` was called only when nothing matched. Of 18 lines, 10 foods and 4 units (gram, tablespoon, teaspoon, pinch) already existed and were reused; 8 foods and 1 unit (`handful`) were created.
+- **Matching must be case-insensitive.** `salt` matched the existing `Salt`. A case-sensitive exact match would have created a duplicate. Match on name and plural name for foods; on name, plural name and abbreviation for units (`tbsp` → `tablespoon`).
+- **Created Foods keep the pipeline's own spelling**, lower case (`green chilli`, `kasuri methi`). Reuse always keeps the catalog's spelling (`Salt`), never the pipeline's.
+- **Specific names stay separate foods.** `turmeric powder`, `cumin powder`, `dry mango powder` and `cumin seeds` were new foods rather than being folded into `turmeric`, `cumin` etc. Only matches that are exact, plural, alias or singularized should reuse; fuzzy ≥ 92 on short names can merge things that differ ("cumin seeds" vs "cumin powder"), so the fuzzy threshold needs a test case for that.
+- **Qualifiers go in the note, not the food name.** "2 small onions" → food `onion`, note `small`; "garlic, roughly chopped" → food `garlic`, note `roughly chopped`; "lady finger" → food `okra`, note `lady finger / bhindi`.
+- **Unit-less and quantity-less lines are valid.** `unit: null`; `quantity: 0` for "to taste" / "as required".
+- Unit creation needs `abbreviation: ""`, not null (422 otherwise); see ticket 01's Comments.
+- The new-Food/Unit log (`created_foods.csv`, `created_units.csv`) should record the video the name first came from, so a bad auto-created entry can be traced and merged (`PUT /api/foods/merge`).
