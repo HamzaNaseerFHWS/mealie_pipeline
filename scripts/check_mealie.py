@@ -154,6 +154,16 @@ def main():
     report["tag_names"] = sorted(t["name"] for t in tags)
     report["unit_names"] = sorted(u["name"] for u in units)
     step(report, "read tags, categories, foods, units", True, json.dumps(report["counts"]))
+
+    # existing recipes by source, so the pipeline knows how many earlier imports it must not duplicate
+    status, all_recipes = api.request("GET", "/api/recipes?perPage=-1")
+    if status == 200:
+        by_source: dict[str, int] = {}
+        for r in all_recipes.get("items", []):
+            host = urllib.parse.urlparse(r.get("orgURL") or "").netloc.lower().removeprefix("www.").removeprefix("m.")
+            by_source[host or "(no source URL)"] = by_source.get(host or "(no source URL)", 0) + 1
+        report["existing_recipes_by_source"] = dict(sorted(by_source.items(), key=lambda kv: -kv[1]))
+        step(report, "existing recipes by source", True, json.dumps(report["existing_recipes_by_source"]))
     step(report, "at least one tag exists", bool(tags), "the pipeline needs existing tags to choose from")
 
     if args.write_test:

@@ -17,7 +17,7 @@ Does the Mealie instance accept a token-authenticated write of a fully parsed, t
    $env:MEALIE_TOKEN = "<paste token>"
    py scripts\check_mealie.py --url http://mealie.taildce5a6.ts.net:9000 --write-test
    ```
-3. All lines should say `OK`. The script creates a throwaway recipe, checks the parsed ingredient, tag, `orgURL`, `extras` and the `org_url` search, then deletes it.
+3. All lines should say `OK`. The script creates a throwaway recipe, checks the parsed ingredient, tag, `orgURL`, `extras` and the `org_url` search, then deletes it. It also counts your existing recipes by source site (for example how many came from instagram.com), which tells ticket 22 how many earlier imports to protect.
 4. Paste the contents of `mealie_check_report.json` (it contains no token) as the answer below.
 5. Keep the token for the pipeline's `.env` (`MEALIE_TOKEN=...`).
 

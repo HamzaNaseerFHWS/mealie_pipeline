@@ -47,7 +47,8 @@ Always start the lowest-numbered ticket whose blockers are finished (`done` for 
          │      ├─ 07 (W17) ── 11 (also 09)
          │      └─ 13 (W18)
          └─ 08 ─ 09 ─ 10
-19 (you + agent): after 07, 13, 14, W13, W14
+22 (skip recipes already in Mealie): after 03, 04. Needed before 18, 19, 21
+19 (you + agent): after 07, 13, 14, 22, W13, W14
 21: after 10, 11, 12, 15, 16, 17, 18, 20 and W19 (confirm run defaults with you)
 ```
 
