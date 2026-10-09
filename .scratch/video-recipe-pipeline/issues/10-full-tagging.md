@@ -13,6 +13,8 @@
 
 **Read first:** `spec.md` module 11; `PIPELINE_SPEC.md` §8. The real rule mapping is confirmed in wayfinder ticket 19. Ship `tag_rules.yaml` with commented examples that use placeholder tag names, and validate at startup that every named tag exists.
 
+- [ ] Tag matching is case-, whitespace- and punctuation-insensitive (and compares slugs), so "Quick ", "quick" and "Quick!" resolve to the one existing tag. The pipeline never creates a tag that differs from an existing one only in case or spacing. Pure and table-tested.
+- [ ] Categories are **not** set in v1 (tags only, pending wayfinder 19). The payload never includes `recipeCategory`.
 - [ ] Rule evaluation and contradiction removal are pure and table-tested (meat/fish/egg/dairy Food lists in config; vegetarian vs vegan handled separately).
 - [ ] Tag choice ranking: rule tags first, then LLM tags by rank, deduped, capped at 6.
 - [ ] `mp doctor` lists rules whose tag is missing from Mealie.

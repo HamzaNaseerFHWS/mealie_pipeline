@@ -26,6 +26,12 @@ The full Gate, the second parse engine, rule tags, multi-recipe and languages co
   - ISO-8601 durations, Section `title` on the first ingredient of each Section, a fresh `referenceId` per ingredient
   - `orgURL` = canonical Video URL
   - `extras` = `{item_key, video_key, part: 1, of: 1, platform, pipeline_version}`
+- [ ] **Recipe image** (the pipeline fetches it itself; Mealie never scrapes the Video page):
+  - **YouTube:** download `https://i.ytimg.com/vi/<id>/maxresdefault.jpg`, falling back to `hqdefault.jpg` on 404 or the tiny placeholder image (≤ 120 px wide).
+  - **Other platforms:** the `thumbnail` from yt-dlp metadata.
+  - **Order of attempts:** upload the local file with `upload_image`. If that fails, try `set_image_from_url` with the thumbnail URL. If that fails too, the recipe **stays uploaded**: the item is marked `image_missing` in the report (a warning, not a failure) and the run continues.
+  - **Tests:** the pure fallback logic is table-tested, and a pipeline-seam test covers "file upload fails, URL works" and "both fail, recipe still present".
+- [ ] The upload stage records the Mealie slug and the recipe link (`recipe_url(slug)`) in the State Store, and prints the link.
 - [ ] Upload reads the recipe back and fails the item (Stage Record `failed`, reason recorded) if the ingredient count, any food id, or the tags differ from what was sent.
 - [ ] Pipeline-seam test: a fake `VideoSource` returns an `info.json` fixture whose description holds a full recipe, `FakeLLM` returns a recorded extraction, and `FakeMealie` starts with tags and some foods. After `mp add` + `mp run`, `FakeMealie` holds exactly one recipe with all ingredients linked to food ids, ≥ 1 existing tag and the thumbnail. A second `mp run` makes no new writes.
 - [ ] `--dry-run` writes the payload JSON under `work/` and makes no Mealie writes.

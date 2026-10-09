@@ -23,5 +23,5 @@
 - [ ] State: Recipe Part stage records are independent. A test fails part 2's verification and confirms parts 1 and 3 upload, part 2 goes to review, and the Video shows "2/3 uploaded" in status.
 - [ ] Grounding scope: a quote that exists only in part 1's slice fails Grounding for part 2.
 - [ ] Payloads: a timestamped `orgURL` for YouTube; the plain URL plus `extras.part` elsewhere; sibling notes with each sibling's name (slugs are filled in after all parts upload, by a final PATCH of notes).
-- [ ] The frame grab uses the `VideoSource` frame method (fake in tests). The frame image is uploaded for parts without a website image.
+- [ ] The frame grab uses the `VideoSource` frame method (fake in tests). The frame image is uploaded for parts without a website image, using the same file → URL → `image_missing` fallback chain as ticket 02.
 - [ ] Single-recipe Videos behave exactly as before. The ticket 02 test still passes unchanged.

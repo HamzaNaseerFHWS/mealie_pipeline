@@ -21,7 +21,14 @@ From the Mealie source (`mealie-recipes/mealie` @ `96f15f3`, v3.28.0):
 - Tags on a recipe: `tags: [{id, name, slug}]`.
 - `orgURL` is the source URL field (camelCase alias in JSON). `extras` is a free-form dict.
 - Search by source: `GET /api/recipes?queryFilter=org_url="<url>"`. The query filter decamelizes names, so it needs the **snake_case** column name.
-- Image: `PUT /api/recipes/{slug}/image` (multipart upload) or `POST /api/recipes/{slug}/image {"url": ...}`.
+- Image:
+  - **Preferred:** `PUT /api/recipes/{slug}/image`, multipart with a file field `image` (bytes) and a form field `extension` (e.g. `jpg`).
+  - **Fallback:** `POST /api/recipes/{slug}/image {"url": ...}`. Mealie downloads the URL itself through its safe-fetch layer, and returns 400 for a non-image response, a disallowed domain or a failed download, leaving the old image unchanged.
+  - **Remove:** `DELETE /api/recipes/{slug}/image`.
+- Recipe link for reports: `<MEALIE_URL>/g/<group_slug>/r/<slug>`. `group_slug` comes from `GET /api/users/self` (field `groupSlug`).
+- Tag creation (`POST /api/organizers/tags {"name"}`) needs organize permission (the user's own token has it). The response includes `id` and `slug`. Lookup by slug: `GET /api/organizers/tags/slug/{slug}`.
+- `PUT /api/recipes/{slug}` replaces the whole recipe (422 if required fields are missing), so always PATCH.
+- **Not used:** `POST /api/recipes/create/html-or-json`. It imports ingredients unparsed, can fall through to Mealie's AI transcription for video URLs, and auto-creates tags from `keywords`. See ADR 0001. `bulk-actions/tag` and `bulk-actions/categorize` aren't needed either, because tags are set per recipe in the PATCH.
 - Cleanup helpers: `GET /api/foods/empty`, `GET /api/organizers/tags/empty`, `PUT /api/foods/merge`.
 
 These are verified against the live instance by ticket "Run the Mealie API check on the laptop".
