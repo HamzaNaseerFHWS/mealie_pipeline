@@ -1,6 +1,6 @@
 # Mealie video recipe pipeline: plan and spec
 
-**Status:** Draft v0.3 (input is your saved lists on YouTube, Instagram and Facebook; own collector, classifier, scraper, parser and verification; Mealie is storage only). Needs answers to the [open questions](#11-open-questions) before build starts.
+**Status:** Draft v0.4 (input is your saved lists on YouTube, Instagram and Facebook; own collector, classifier, scraper, parser and verification; Mealie is storage only). Needs answers to the [open questions](#11-open-questions) before build starts.
 **Goal:** Give the pipeline links to your **saved playlists / collections** on YouTube, Instagram and Facebook (about 300 items each). It collects every video URL, keeps only real **recipe** videos (no restaurant ads, places to visit or product promos), and imports them into a self-hosted Mealie instance as clean recipes. Each recipe should have parsed ingredients (quantity, unit and food all linked) and at least one existing tag.
 
 ---
@@ -41,6 +41,72 @@ Its transcripts and AI output weren't good enough in practice either. **Decision
 - **Start with a pilot of 20 videos** (a mix of platforms), check the results in the Mealie UI, tune, then run the rest.
 
 **Stack:** Python 3.12, `uv`, `httpx`, **Playwright** (headless Chromium for JS-heavy pages and link-in-bio pages), `selectolax` / `trafilatura` (HTML → clean text), `extruct` + `recipe-scrapers` (structured data), `pydantic` v2, `yt-dlp` (+ `curl_cffi`), `faster-whisper`, `ingredient-parser-nlp`, `rapidfuzz`, `typer` CLI, `sqlite3`. Runs on **the same PC as Mealie**, so the API is just `http://localhost:9000`.
+
+---
+
+## 2b. Decisions so far, and the compute / AI backends
+
+**Decided with you (v0.4):**
+
+| Topic | Decision |
+|---|---|
+| Instagram input | **All posts** in your saved items (`instagram.com/<you>/saved/all-posts/`) |
+| Instagram / Facebook access | **Logged-in browser** driven by the pipeline, with a one-time manual login by you (`mp login`) |
+| What gets imported | `recipe` **and** `recipe_partial` (sauces, techniques), **drinks/cocktails count as recipes**, and **compilations are split** into one Mealie recipe per dish (see §6) |
+| First test | We run the pipeline **together on one of your collections** (you'll send the link). That collection becomes the pilot and the source of the first test cases |
+| Transcription | **Local on your GTX 1650** (free), see below |
+| AI (classify / extract / parse / tag / verify) | **Your Claude Code subscription** through the `claude` CLI. **OpenAI credits only as an emergency fallback**, off by default and capped |
+
+### Local transcription on a GTX 1650 (4 GB VRAM, no tensor cores)
+
+- **Engine:** `faster-whisper` (CTranslate2). The GTX 1650 has compute capability 7.5, which supports `float16`/`int8_float16`. It has no tensor cores, so it gains less from fp16 than newer cards, but it still runs many times faster than the CPU.
+- **Model ladder (tried in order, picked once by a benchmark on your laptop):**
+  1. `large-v3-turbo` with `compute_type="int8_float16"`, about 1.6–2.5 GB VRAM. **Default.** This is the best quality that fits comfortably in 4 GB.
+  2. `large-v3-turbo` with `int8`, if (1) runs out of memory or produces NaN/garbage on this card.
+  3. `medium` / `small` with `int8_float16`, the last resort for speed.
+  - Full `large-v3` is **not** used, because it doesn't fit reliably in 4 GB.
+- **Settings:** `batch_size=1`, `beam_size=5` (drop to 1 if too slow), `vad_filter=True`, `condition_on_previous_text=False` (reduces repetition loops on music), `language` set when known.
+- **One GPU job at a time.** Transcription runs as its own queue. Close games and browsers that use the GPU during long runs, because the 4 GB is shared with the display.
+- **`mp bench-whisper`** (in M0) transcribes 3 sample videos with each ladder step and records speed, VRAM and quality. Expected throughput is roughly 5–15× real time, so ~22 h of audio worst case takes about **2–5 h**, and likely much less after skipping videos that have a website recipe or subtitles. Good for an overnight run.
+- **Laptop care:** run plugged in. The queue is resumable, so closing the lid or a thermal slowdown loses nothing.
+- **CPU fallback:** `int8` on CPU works if CUDA setup is a problem. It's slow but still fine overnight.
+- **Emergency fallback:** OpenAI `gpt-4o-mini-transcribe` (about $0.003/min), only for videos where local transcription fails twice, and only when `--allow-openai` is set.
+
+### AI backend: Claude Code subscription via `claude -p`
+
+The pipeline never calls an API directly for Claude. It runs the **Claude Code CLI in non-interactive mode**, which uses your subscription login:
+
+```bash
+# --model: haiku for classification, sonnet for extract/verify
+# --safe-mode: no CLAUDE.md, hooks, plugins or MCP; login and model still work
+# --tools "": pure text in / JSON out, no file or shell access
+# stdin: the labeled sources (max 10 MB)
+claude -p \
+  --model sonnet \
+  --safe-mode \
+  --tools "" \
+  --system-prompt-file prompts/extract.md \
+  --output-format json \
+  --json-schema "$(cat schemas/extracted_recipe.json)" \
+  --no-session-persistence \
+  < work/<video_id>/llm_input.md
+```
+
+The result is in `.structured_output` of the JSON response, already validated against the schema. Pydantic validates it again on our side.
+
+- **Do not use `--bare`:** bare mode ignores the subscription login and needs an API key.
+- **Image input (OCR of on-screen text, phase 2):** the same call with `--tools "Read"`, run in a working directory that contains only the sampled frames.
+- **Usage limits:** subscription usage is limited per time window. The `llm` module detects `rate_limit` errors (exit code + `api_retry`/result error), **pauses the queue until the window resets**, and resumes. Nothing is lost, because every stage is resumable.
+- **Fewer, bigger calls to save usage:**
+  - Classification is batched (about 20 items per call, Haiku).
+  - Extraction, LLM ingredient parsing and tag selection happen in **one** Sonnet call per recipe.
+  - Verification (LLM judge) is a second call, made only when the deterministic checks pass. That's about **2–3 calls per recipe**.
+  - With ~300–600 recipes, the full run is spread over a few days of normal subscription limits. That's fine because `mp run` can be left running and resumes on its own.
+- **Concurrency:** 1–2 parallel `claude -p` processes (configurable).
+- **Terms of use:** this is personal, local, low-volume use of your own subscription through the official CLI. Anthropic's rules for scripted/Agent SDK use of subscriptions have been changing in 2026, so check the current Claude Code usage policy before the full run. If scripted use ever needs an API key, the backend switches to `ANTHROPIC_API_KEY` by changing config only.
+- **Emergency fallback: OpenAI** (`backend: openai` for a single stage or item). It's only used when `--allow-openai` is passed, with a hard spend cap (`OPENAI_MAX_USD`, default $2) tracked in the SQLite DB. Every OpenAI call is logged in the report.
+
+The backend is an interface (`llm.complete(prompt, schema, model_tier)`), so stages don't know or care which provider answered.
 
 ---
 
@@ -100,7 +166,7 @@ Saved lists are full of things that aren't recipes. Each collected item is class
    - **Rule signals** (computed features, not decisions on their own):
      - *Pro-recipe:* "recipe", "ingredients", quantity + unit patterns, "how to make", cooking verbs, "full recipe on my site/link in bio", hashtags like `#recipe` / `#easyrecipes`.
      - *Anti-recipe:* a 📍 / location tag, addresses or opening hours, "located in", "visit", "menu", "reservation", "#foodie #[city]eats", prices in local currency, "ad" / "sponsored" / "paid partnership" / "use code".
-   - **An LLM classifier** gets the metadata **and** the rule signals and returns `{label, confidence, reasons[]}` with structured output. Model: Claude Haiku 5.5 (cheap, fast). Batch about 20 items per call.
+   - **An LLM classifier** gets the metadata **and** the rule signals and returns `{label, confidence, reasons[]}` with structured output. Model: Claude Haiku via `claude -p --model haiku` (§2b). Batch about 20 items per call.
 2. **If `uncertain` or confidence < 0.7:** fetch the video's subtitles, or transcribe **only the first 60 s** of audio, and classify again with that text.
 3. **If still uncertain**, the item goes into `classify_review.csv` for you to decide (`mp review classify` shows the items one by one in the terminal and records your answers).
 
@@ -172,11 +238,11 @@ All available sources are still passed on, not only the best one. The verifier u
 
 Rough volume estimate: about 900 videos × about 1.5 min ≈ **22 h of audio** worst case (much less after skips).
 
-| Option | Quality | Cost for about 22 h | Notes |
-|---|---|---|---|
-| **`faster-whisper` `large-v3`, local** ⭐ if you have an NVIDIA GPU | Very good | Free | Word timestamps, VAD filter (`vad_filter=True`) to skip music. |
-| **Groq `whisper-large-v3`** ⭐ if no GPU | Very good | About $0.11/h → **about $2.50** | 25 MB limit, so send 16 kHz mono opus. A free tier exists. |
-| OpenAI `gpt-4o-transcribe` | Best on music-heavy audio | About $0.36/h → about $8 | Retry engine for videos the others fail on. |
+| Engine | When | Cost |
+|---|---|---|
+| **`faster-whisper` `large-v3-turbo` `int8_float16` on your GTX 1650** | default (see §2b for the model ladder) | free |
+| same, `int8` on CPU | CUDA problems | free (slow) |
+| OpenAI `gpt-4o-mini-transcribe` | only after 2 local failures **and** `--allow-openai` | about $0.003/min, capped |
 
 **Making it robust:**
 - **Vocabulary prompt:** the video title + description + common units go in `initial_prompt` / `prompt`, so "gochujang" isn't heard as "go-to-jang".
@@ -231,7 +297,9 @@ class ExtractedRecipe(BaseModel):
 
 Rules: **never invent quantities** (unstated means `to taste` / `quantity_stated=false`), one ingredient per line, keep section headers, and use the original wording for food names.
 
-**Model:** a Claude model through the Anthropic API with structured outputs. Sonnet 5.5 for extraction, because accuracy matters more than cost on about 300–900 recipes. Configurable. The cost per recipe is measured on the pilot.
+**Model:** Claude Sonnet via `claude -p --model sonnet --json-schema …` on your subscription (§2b). The same call also does the LLM ingredient parse (§7) and tag selection (§8), to save usage. A retry with `--model opus` is used for recipes that fail verification.
+
+**Compilations** ("5 meal-prep lunches", "3 sauces for pasta"): the schema's top level is `recipes: list[ExtractedRecipe]`. Each dish becomes its **own** Mealie recipe, sharing the same `orgURL` plus a `#<n>` suffix in `extras.part`, and each one gets its own evidence, verification and tags.
 
 ---
 
@@ -318,11 +386,15 @@ Exact camelCase field names are checked against your instance's `/openapi.json` 
 
 ## 11. Open questions
 
-1. **Your saved-list links:** send the actual URLs. How many lists per platform? Is Instagram **one** collection or "All posts", and on Facebook, is it a named collection or all saved items? Are any of the YouTube ones **Watch Later / Liked**? Those need a cookie login.
-2. **Browser login vs data export for Instagram and Facebook:** is it OK for the pipeline to drive a logged-in browser on your account (slow, human-paced), or would you rather request the official data export and feed that in (zero automation on your account, but only a snapshot that you re-request for updates)? I recommend the browser collector with the export as a fallback.
-3. **Classifier policy:** should `recipe_partial` (sauces, techniques, "3 ways to cut an onion") be imported? Are drinks/cocktails recipes? What about meal-prep compilations with 5 recipes in one video (split into 5 Mealie recipes, or skip)?
-4. **Examples:** send 3–5 example videos that should be imported, and 2–3 that should be skipped (restaurant/ad). These become the first test cases.
-5. **Language and setup:** what language are the videos in, and what language should the recipes be stored in? Do you have an NVIDIA GPU (then local Whisper is free), and which AI API keys do you have (Anthropic, OpenAI, Groq)? Do you have a browser you're logged in with (Firefox or Chrome) on the PC that runs the pipeline?
+Answered: Instagram = all posts · logged-in browser OK · partial recipes, drinks and split compilations included · pilot on one of your collections (link to come) · GTX 1650 + Claude Code subscription, OpenAI only as an emergency fallback.
+
+Still open:
+
+1. **The pilot collection link**, whenever you're ready.
+2. **Machine and OS:** is Mealie on the **same laptop** as the GTX 1650, or on another PC? Windows, Linux or macOS? On Windows, I'd run the pipeline natively with Python (CUDA works there) rather than in WSL, because the browser login is easier.
+3. **Language:** what language are the videos in, and what language should the recipes be stored in?
+4. **Browser:** which browser are you normally logged in to YouTube with (for Watch Later/Liked cookies)?
+5. **Claude plan:** Pro or Max? This only changes how fast the run goes before usage limits pause it.
 6. **Foods and units:** is it OK to auto-create missing foods and units in Mealie (logged to CSV), or should unknown ones go to a review list first?
 7. **Tags:** is it OK to add a `To Review` tag for uncertain recipes? Should the pipeline also set **categories** and **tools**, or only tags? Is it allowed to *suggest* new tags?
 8. **Mealie version and setup:** which version are you running (Settings → About), and is it on Docker at `localhost:9000`? (Needed only for API field names, since nothing of Mealie's AI or parser is used.)
@@ -342,9 +414,10 @@ Exact camelCase field names are checked against your instance's `/openapi.json` 
 | YouTube | Nothing for public videos. Optional: Google Cloud project → enable YouTube Data API v3 → API key | `YOUTUBE_API_KEY` (opt.) |
 | Instagram (optional fallback) | **Download your information** → JSON → include "Saved". Used if the browser collector gets blocked | `IG_EXPORT_DIR` |
 | Facebook (optional fallback) | **Download your information** → JSON → "Saved items and collections" | `FB_EXPORT_DIR` |
-| Transcription | Groq console API key, **or** local GPU with CUDA + `faster-whisper`, **or** OpenAI key | `GROQ_API_KEY` / `OPENAI_API_KEY` |
-| LLM | Anthropic API key (or OpenAI-compatible) | `ANTHROPIC_API_KEY` |
-| Tools | `ffmpeg`, `uv`, Python 3.12, `yt-dlp` (keep it updated, since platforms break it often) | — |
+| Transcription | NVIDIA driver + CUDA 12 runtime + cuDNN 9 (pulled in by `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12`), then `faster-whisper`. Checked by `mp doctor` | — |
+| AI | Claude Code installed and logged in with your subscription (`claude auth status` → `authMethod: claude.ai`). Checked by `mp doctor` | — |
+| Emergency only | OpenAI API key, used only with `--allow-openai` | `OPENAI_API_KEY`, `OPENAI_MAX_USD` |
+| Tools | `ffmpeg`, `uv`, Python 3.12, Claude Code CLI, `yt-dlp` (keep it updated, since platforms break it often); Playwright Chromium | — |
 
 Secrets go in `.env` (git-ignored). `cookies.txt`, `secrets/` and exports are never committed. **`cookies.txt` is equivalent to being logged in to your account**, so keep it private and delete it when you're done.
 
@@ -372,8 +445,11 @@ mealie_pipeline/
     dedupe.py
     sources/{youtube,instagram,facebook}.py                                 # per-video metadata
     scrape/{links.py,fetch.py,structured.py,plugins.py,fallback_text.py}   # our own website scraper
-    transcribe/{subs,faster_whisper,groq,openai,ocr}.py
-    extract/{prompt.py,schema.py,llm.py}
+    transcribe/{subs,faster_whisper,openai_fallback,ocr}.py
+    llm/{base.py,claude_cli.py,openai_fallback.py,ratelimit.py}         # claude -p backend + emergency fallback
+    extract/{prompt.py,schema.py}
+  prompts/                 # system prompts per stage (classify.md, extract.md, judge.md)
+  schemas/                 # JSON schemas passed to --json-schema
     parse/{nlp.py,llm.py,reconcile.py,units.py,foods.py}                  # our own ingredient parser
     tag/{llm.py,rules.py}
     verify/{checks.py,grounding.py,judge.py,score.py}
@@ -387,8 +463,8 @@ mealie_pipeline/
 
 ## 14. Milestones
 
-1. **M0 (setup):** answer the questions, add tokens to `.env`, run a smoke test against Mealie (`GET /api/app/about`, `/openapi.json`, list tags, foods and units, create and delete a test recipe).
-2. **M1 (scraper and parser first):** build the website scraper and ingredient parser against your example pages. You hand-check about 10 **golden recipes** (correct ingredients, quantities and tags), which become regression tests that every later change must pass.
+1. **M0 (setup):** `mp doctor` (checks Python, ffmpeg, CUDA/GPU, `claude auth status`, Playwright, yt-dlp version, Mealie reachability), `mp bench-whisper` (picks the Whisper model for your GTX 1650), a `claude -p` smoke test with a JSON schema, and a smoke test against Mealie (`GET /api/app/about`, `/openapi.json`, list tags, foods and units, create and delete a test recipe).
+2. **M1 (pilot on your collection, together):** you send one collection link. We collect it, classify it, and check the labels together. Then we build and tune the website scraper and ingredient parser on the recipe videos in it. You hand-check about 10 **golden recipes** (correct ingredients, quantities and tags), which become regression tests that every later change must pass.
 3. **M1b (YouTube pilot):** collect one YouTube playlist (the easiest collector), classify it, then run 10 recipe videos end-to-end in dry-run with verification reports, then write to Mealie. You review them in the UI.
 4. **M2 (collect and classify):** collectors for all 3 platforms (`mp login`, `mp collect`), URL normalization, and the classifier. You hand-label about 50 random items, and the classifier must reach ≥ 95 % on `recipe` before we continue. You review `classification.csv` and `dedupe.csv` for the full lists.
 5. **M3 (full pilot):** 20 mixed videos. Tune the prompts, tag rules and the verification score threshold.
@@ -404,7 +480,8 @@ mealie_pipeline/
 - Mealie migration guide (v3.23 AI workflow): https://mealie.io/contributors/developers-guide/migration-guide/
 - ingredient-parser-nlp: https://github.com/strangetom/ingredient-parser
 - extruct: https://github.com/scrapinghub/extruct · recipe-scrapers: https://github.com/hhursev/recipe-scrapers
-- Groq speech-to-text: https://console.groq.com/docs/speech-to-text
+- Claude Code headless mode and CLI reference (`-p`, `--json-schema`, `--tools`, `--safe-mode`, `--bare`): https://code.claude.com/docs/en/headless · https://code.claude.com/docs/en/cli-reference
+- faster-whisper: https://github.com/SYSTRAN/faster-whisper
 - Instagram Media API reference: https://developers.facebook.com/documentation/instagram-platform/reference/instagram-media
 - yt-dlp 2026.08.19 source `yt_dlp/extractor/instagram.py`, `facebook.py` (no saved/collection extractors; single post/reel URLs supported)
 - Instaloader `:saved` target: https://instaloader.github.io/basic-usage.html
