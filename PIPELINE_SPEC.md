@@ -1,7 +1,7 @@
 # Mealie video recipe pipeline: plan and spec
 
-**Status:** Draft v0.2 (own scraper, parser and verification; Mealie is storage only). Needs answers to the [open questions](#11-open-questions) before build starts.
-**Goal:** Import about 900 cooking videos (about 300 each from Instagram, YouTube and Facebook) into a self-hosted Mealie instance as clean recipes. Each recipe should have parsed ingredients (quantity, unit and food all linked) and at least one existing tag.
+**Status:** Draft v0.3 (input is your saved lists on YouTube, Instagram and Facebook; own collector, classifier, scraper, parser and verification; Mealie is storage only). Needs answers to the [open questions](#11-open-questions) before build starts.
+**Goal:** Give the pipeline links to your **saved playlists / collections** on YouTube, Instagram and Facebook (about 300 items each). It collects every video URL, keeps only real **recipe** videos (no restaurant ads, places to visit or product promos), and imports them into a self-hosted Mealie instance as clean recipes. Each recipe should have parsed ingredients (quantity, unit and food all linked) and at least one existing tag.
 
 ---
 
@@ -23,12 +23,12 @@ Its transcripts and AI output weren't good enough in practice either. **Decision
 ## 2. Architecture overview
 
 ```
- 0.DISCOVER ─▶ 1.SCRAPE ─▶ 2.TRANSCRIBE ─▶ 3.EXTRACT ─▶ 4.PARSE ─▶ 5.TAG ─▶ 5b.VERIFY ─▶ 6.UPLOAD ─▶ 7.REVIEW
- list videos   our own     own STT,       LLM with      own         closed    checks +      Mealie API    report +
- + dedupe      scraper:    only if        evidence      ingredient  list,     score gate    (storage      review
-               video page  needed         quotes        parser +    ≥1 tag    ─────────     only) +       queue
-               + website                                food/unit             fail ⇒ retry  read-back
-                                                        resolve               or review     check
+ 0a.COLLECT ─▶ 0b.CLASSIFY ─▶ 0c.DEDUPE ─▶ 1.SCRAPE ─▶ 2.TRANSCRIBE ─▶ 3.EXTRACT ─▶ 4.PARSE ─▶ 5.TAG ─▶ 5b.VERIFY ─▶ 6.UPLOAD ─▶ 7.REVIEW
+ saved-list    recipe vs      same recipe  our own     own STT,       LLM with      own         closed    checks +      Mealie API    report +
+ links ⇒ all   restaurant/    across lists scraper:    only if        evidence      ingredient  list,     score gate    (storage      review
+ video URLs    ad/travel      & platforms  video page  needed         quotes        parser +    ≥1 tag    fail ⇒ retry  only) +       queue
+ (yt-dlp /     (rules + LLM,  + already in + website                              food/unit             or review     read-back
+ Playwright)   you override)  Mealie                                                resolve                             check
             all stage outputs cached on disk + state in SQLite; every stage re-runnable on its own
 ```
 
@@ -44,23 +44,80 @@ Its transcripts and AI output weren't good enough in practice either. **Decision
 
 ---
 
-## 3. Stage 0: Discover (build the video manifest)
+## 3. Stage 0: Collect and classify (start from your saved lists)
 
-**Output:** one `videos` row per video with `platform`, `video_id`, `url`, `title`, `upload_date`, `duration`, and `status=discovered`.
+**Input:** you give the pipeline **links to your saved lists**, and it finds every video URL in them by itself:
 
-| Platform | Primary method (recommended) | Alternative |
+```bash
+mp collect https://www.youtube.com/playlist?list=PLxxxx            # any YouTube playlist (public, unlisted, private, WL, LL)
+mp collect https://www.instagram.com/<you>/saved/<collection>/<id>/ # an Instagram saved collection (or .../saved/all-posts/)
+mp collect https://www.facebook.com/saved/?list_id=<id>             # a Facebook saved collection (or facebook.com/saved)
+mp collect --file urls.txt                                          # plain list of video URLs (manual additions)
+mp collect --sync                                                   # re-check all known lists, add only new items
+```
+
+Every list is stored in a `sources` table (URL, platform, last synced). `--sync` adds only new items, so you can keep saving videos and re-run the pipeline whenever you like.
+
+### 3.1 Collectors (one per platform)
+
+These are **saved** lists, so most of the videos come from **other creators**. Saved lists are private, so collecting them needs **your logged-in session**.
+
+| Platform | Primary collector | Fallback | Notes |
+|---|---|---|---|
+| **YouTube** | `yt-dlp --flat-playlist -J <playlist url>`. Fast, and returns id, title, channel, duration and URL for every item. Private playlists, **Watch Later (`list=WL`)** and **Liked (`list=LL`)** need `--cookies-from-browser firefox` (or a `cookies.txt`). | YouTube Data API v3 `playlistItems.list` with OAuth (works for your own private playlists, but **not** Watch Later). | Most reliable of the three. |
+| **Instagram** | **Our own Playwright collector:** opens the collection URL in a **persistent browser profile** where you've logged in once, scrolls until no new tiles load, and harvests every `/p/<code>/` and `/reel/<code>/` link. Throttled to human speed (random scroll pauses of 1.5–4 s), capped per session, and it resumes where it left off. | (a) **Data export** (Accounts Center → Download your information → JSON → "Saved"), which contains saved posts and collections with their links. This is the safest route: no automation on your account. The exact file layout is confirmed on your first export. (b) `instaloader --login <you> :saved` (all saved posts, without per-collection grouping). | **yt-dlp can't list saved collections** (confirmed in the yt-dlp 2026.08.19 source: no saved/collection extractor). It *can* download each single `/reel/…` URL with your cookies, which stage 1 uses. |
+| **Facebook** | **Our own Playwright collector** on `facebook.com/saved` / the collection page, scroll and harvest `/reel/<id>`, `/watch/?v=`, `/<page>/videos/<id>` and `fb.watch/…` links (expanded). | **Data export** "Saved items and collections" (JSON). | yt-dlp has no saved-items extractor either. Single `/reel/<id>` and video URLs work with cookies. |
+
+**Login and session handling (Instagram and Facebook):**
+- `mp login instagram` / `mp login facebook` opens a **visible** Chromium window. You log in yourself, including 2FA, and the session is stored in `secrets/browser_profile/`. The pipeline never sees or stores your password.
+- The same profile is exported to `cookies.txt` for yt-dlp in stage 1.
+- If the session expires or a checkpoint/captcha appears, the collector **stops and asks you** to run `mp login` again. It never tries to get around it.
+- **Account safety:** stay at about 300 items per platform. With slow scrolling that's a few minutes per collection, which is normal human behavior. The per-video metadata fetch in stage 1 is the bigger risk, so it's spread out (default ≤ 60 videos/hour per platform, which still finishes in an evening or two). An optional burner account isn't needed for saved lists, because they're tied to your account.
+
+**URL normalization:** remove tracking parameters (`igsh`, `si`, `utm_*`, `mibextid`), expand `youtu.be`, `fb.watch` and `/share/` short links, map shorts to their canonical form (`/shorts/<id>` → video id), and store a **canonical key** `platform:video_id` so the same item from two lists is stored once.
+
+### 3.2 Classify: is this a home-cookable recipe video?
+
+Saved lists are full of things that aren't recipes. Each collected item is classified **before** any expensive work (download, transcription) happens.
+
+**Metadata first:** the Instagram and Facebook collectors only see grid thumbnails, so each item first gets a **metadata-only** fetch (`yt-dlp --skip-download --dump-json --cookies cookies.txt <url>`): caption, uploader, hashtags, location, duration. For YouTube, `--flat-playlist` gives the title, and the full description comes from the same metadata call. This result is cached and reused in stage 1.
+
+**Labels:**
+
+| Label | Example | Action |
 |---|---|---|
-| **YouTube** | `yt-dlp --flat-playlist -J https://www.youtube.com/@<channel>/videos` and `/shorts`. No key needed, and returns IDs and titles fast. | YouTube Data API v3: `channels.list` → uploads playlist → `playlistItems.list` (1 quota unit per 50 videos, 10k units/day free). |
-| **Instagram** | **Official data export** if it's your account: Accounts Center → *Your information and permissions* → *Download your information* → **JSON**, media included. It contains every post and reel with its **caption** and the **video file**, with no scraping and no ban risk. | (a) Instagram Graph API (`graph.instagram.com/me/media?fields=id,caption,media_type,media_url,permalink,thumbnail_url,timestamp`), which needs a **Professional (Creator/Business)** account and a Meta developer app with `instagram_business_basic`. (b) `yt-dlp` / `instaloader` with a logged-in cookie file. This is fragile: Instagram reworked its extractors in mid-2026, and accounts get rate-limited or flagged. |
-| **Facebook** | **Official data export** (same Accounts Center flow, Facebook profile/Page → JSON + media). Includes videos and reels with descriptions. | `yt-dlp` with cookies against the Page's `/videos` and `/reels` tabs. |
+| `recipe` | "Crispy garlic chicken thighs in 20 min" | **process** |
+| `recipe_partial` | "My secret sauce" (technique or single component) | process, flagged |
+| `restaurant_or_place` | "Best ramen in Tokyo 📍", "You need to try this café", food tours | skip |
+| `ad_or_product` | sponsored gadget/brand promos with no recipe, "use code X" | skip |
+| `eating_or_review` | mukbang, taste tests, "rating every Costco snack" | skip |
+| `not_food` | anything else that ended up in the list | skip |
+| `uncertain` | not enough information | escalate (see below) |
 
-**Cross-platform deduplication matters.** If the same recipe is posted on all three platforms, 900 videos might be about 300 unique recipes. After discovery:
+**How it decides (3 tiers, cheapest first):**
 
-1. Group candidates by normalized title, caption similarity (fuzzy / embedding cosine), and upload date within ±7 days.
-2. Mark one **canonical** video per group. Prefer the one with the richest source: website link > longest description > YouTube (best subtitles) > others.
-3. Create **one** Mealie recipe per group. The other URLs go in `extras` and in a recipe note ("Also on Instagram: …").
+1. **Metadata only** (title, caption/description, hashtags, channel name, duration, IG location tag). This is cheap and covers most items. The inputs are:
+   - **Rule signals** (computed features, not decisions on their own):
+     - *Pro-recipe:* "recipe", "ingredients", quantity + unit patterns, "how to make", cooking verbs, "full recipe on my site/link in bio", hashtags like `#recipe` / `#easyrecipes`.
+     - *Anti-recipe:* a 📍 / location tag, addresses or opening hours, "located in", "visit", "menu", "reservation", "#foodie #[city]eats", prices in local currency, "ad" / "sponsored" / "paid partnership" / "use code".
+   - **An LLM classifier** gets the metadata **and** the rule signals and returns `{label, confidence, reasons[]}` with structured output. Model: Claude Haiku 5.5 (cheap, fast). Batch about 20 items per call.
+2. **If `uncertain` or confidence < 0.7:** fetch the video's subtitles, or transcribe **only the first 60 s** of audio, and classify again with that text.
+3. **If still uncertain**, the item goes into `classify_review.csv` for you to decide (`mp review classify` shows the items one by one in the terminal and records your answers).
 
-The dedupe output is a CSV you can check and correct by hand before continuing.
+**You stay in control:**
+- `classification.csv` lists every item with its label, confidence and reasons, plus an `override` column. Any change you make there wins on the next run.
+- Default policy: only `recipe` (and optionally `recipe_partial`) go on to stage 1.
+- **Accuracy check before the full run:** in the pilot, you label about 50 random items by hand and we measure the classifier against them. If precision or recall on `recipe` is below 95 %, we tune the rules and prompt before continuing.
+
+### 3.3 Cross-platform deduplication
+
+The same recipe often appears in several lists, or on several platforms (the creator posts a reel and a YouTube Short). After classification:
+1. Exact duplicates (same canonical key) are merged automatically.
+2. **Near-duplicates:** same creator (handle-matched across platforms) and similar title/caption (fuzzy ≥ 85 or embedding cosine ≥ 0.9). This is confirmed later by comparing extracted ingredient sets (food-level Jaccard ≥ 0.7).
+3. One **canonical** item per group, preferring the one with the richest source: website link > full ingredient list in caption > YouTube (best subtitles) > others. The other URLs go to `extras.also_on` and a recipe note.
+4. A recipe that **already exists in Mealie** (same `orgURL`, or same website URL, or a fuzzy name match + ingredient overlap) is skipped or updated, per `--mode`.
+
+The output (`dedupe.csv`) can be checked and edited by hand.
 
 ---
 
@@ -74,7 +131,7 @@ Saved under `data/<platform>/<id>/`:
 
 | File | How |
 |---|---|
-| `info.json` | `yt-dlp --skip-download --write-info-json` (title, full description, uploader, duration, chapters, thumbnail), or the export / Graph API record |
+| `info.json` | already cached by stage 0b (`yt-dlp --dump-json`, with `--cookies` for Instagram, Facebook and private YouTube) |
 | `description.txt` | full description or caption, **not truncated** (the "…more" text is in `info.json`) |
 | `pinned_comment.txt` | creators often post the recipe in a pinned comment. `yt-dlp --write-comments --extractor-args "youtube:max_comments=20"`, keeping only comments by the uploader |
 | `subs.<lang>.vtt` | `--write-subs --write-auto-subs --sub-langs "en.*,<lang>"`. Creator subtitles and auto-subtitles are kept apart |
@@ -86,7 +143,8 @@ Saved under `data/<platform>/<id>/`:
 1. **Link discovery:** pull URLs from the description, the pinned comment and the channel "about" links.
    - Expand short links (`bit.ly`, `tinyurl`, `geni.us`) by following redirects with `httpx`.
    - **Link-in-bio pages** (`linktr.ee`, `lnk.bio`, `beacons.ai`, Instagram "link in bio") are opened in **Playwright** and their links collected. A link is picked by fuzzy-matching the video title against the link text or slug.
-   - **Site search fallback:** if a video has no link but you have a recipe website, search the site for the video title (`/?s=<title>`, the WordPress REST API `/wp-json/wp/v2/posts?search=`, or `sitemap.xml`) and fuzzy-match titles (≥ 85). It's flagged `link_source=site_search` so the verifier is stricter.
+   - **Creator website discovery:** these are other creators' videos, so we keep a `creators` table (handle → website), filled from their channel "About" links, IG/FB bio links and earlier videos. One creator lookup serves all their saved videos.
+   - **Site search fallback:** if a video has no link but the creator has a known recipe website, search that site for the video title (`/?s=<title>`, the WordPress REST API `/wp-json/wp/v2/posts?search=`, or `sitemap.xml`) and fuzzy-match titles (≥ 85). It's flagged `link_source=site_search` so the verifier is stricter.
 2. **Fetch:** use `httpx` first, with a real browser User-Agent and HTTP/2. If the page is blocked (403/429, Cloudflare challenge) or the recipe card is rendered by JS, retry with Playwright. Raw `page.html` is saved, plus `page.png` (a screenshot, useful for review).
 3. **Extract structured data, in this order:**
    1. **JSON-LD `@type: Recipe`** via `extruct` (including inside `@graph`, which is the WordPress/Yoast style)
@@ -260,11 +318,11 @@ Exact camelCase field names are checked against your instance's `/openapi.json` 
 
 ## 11. Open questions
 
-1. **Websites to scrape:** which domain(s) do the video descriptions link to? Is it one recipe site (your own?) or many different creators' sites? Can you send me 3–5 example video URLs, including one where the link only works through link-in-bio, so I can build and test the scraper on real pages first?
-2. **Whose videos are these?** Are they **your own accounts** (then official data exports are the best route for Instagram and Facebook), or someone else's / saved posts (then we need yt-dlp + cookies)?
-3. **Is it the same recipes on all three platforms?** Is it about 300 unique recipes posted 3 times, or about 900 different ones? This decides whether dedupe is central.
-4. **Language** of the videos, and the language you want the recipes stored in.
-5. **Hardware:** do you have an NVIDIA GPU (then local Whisper is free), or should we use Groq or OpenAI? Which LLM API keys do you already have (Anthropic, OpenAI, other)?
+1. **Your saved-list links:** send the actual URLs. How many lists per platform? Is Instagram **one** collection or "All posts", and on Facebook, is it a named collection or all saved items? Are any of the YouTube ones **Watch Later / Liked**? Those need a cookie login.
+2. **Browser login vs data export for Instagram and Facebook:** is it OK for the pipeline to drive a logged-in browser on your account (slow, human-paced), or would you rather request the official data export and feed that in (zero automation on your account, but only a snapshot that you re-request for updates)? I recommend the browser collector with the export as a fallback.
+3. **Classifier policy:** should `recipe_partial` (sauces, techniques, "3 ways to cut an onion") be imported? Are drinks/cocktails recipes? What about meal-prep compilations with 5 recipes in one video (split into 5 Mealie recipes, or skip)?
+4. **Examples:** send 3–5 example videos that should be imported, and 2–3 that should be skipped (restaurant/ad). These become the first test cases.
+5. **Language and setup:** what language are the videos in, and what language should the recipes be stored in? Do you have an NVIDIA GPU (then local Whisper is free), and which AI API keys do you have (Anthropic, OpenAI, Groq)? Do you have a browser you're logged in with (Firefox or Chrome) on the PC that runs the pipeline?
 6. **Foods and units:** is it OK to auto-create missing foods and units in Mealie (logged to CSV), or should unknown ones go to a review list first?
 7. **Tags:** is it OK to add a `To Review` tag for uncertain recipes? Should the pipeline also set **categories** and **tools**, or only tags? Is it allowed to *suggest* new tags?
 8. **Mealie version and setup:** which version are you running (Settings → About), and is it on Docker at `localhost:9000`? (Needed only for API field names, since nothing of Mealie's AI or parser is used.)
@@ -278,15 +336,17 @@ Exact camelCase field names are checked against your instance's `/openapi.json` 
 
 | What | How | Env var |
 |---|---|---|
+| Saved lists | A list of your saved-list URLs (YouTube playlists incl. `WL`/`LL`, Instagram collections, Facebook saved collections) in `config/sources.yaml` | — |
+| Browser login (IG/FB, private YT) | `mp login instagram` / `mp login facebook` / `mp login youtube`, a one-time manual login in a visible browser. The session is stored locally in `secrets/browser_profile/` and exported to `cookies.txt` for yt-dlp | `BROWSER_PROFILE_DIR`, `YTDLP_COOKIES` |
 | Mealie API token | Mealie → your profile → **API Tokens** → create (or `POST /api/users/api-tokens`) | `MEALIE_URL`, `MEALIE_TOKEN` |
 | YouTube | Nothing for public videos. Optional: Google Cloud project → enable YouTube Data API v3 → API key | `YOUTUBE_API_KEY` (opt.) |
-| Instagram | Request **Download your information** (JSON, all time, media included). It's ready in minutes to a few days. Fallback: export `cookies.txt` from a logged-in browser (Netscape format) | `IG_EXPORT_DIR` / `YTDLP_COOKIES` |
-| Facebook | Same export from Accounts Center for the profile/Page | `FB_EXPORT_DIR` |
+| Instagram (optional fallback) | **Download your information** → JSON → include "Saved". Used if the browser collector gets blocked | `IG_EXPORT_DIR` |
+| Facebook (optional fallback) | **Download your information** → JSON → "Saved items and collections" | `FB_EXPORT_DIR` |
 | Transcription | Groq console API key, **or** local GPU with CUDA + `faster-whisper`, **or** OpenAI key | `GROQ_API_KEY` / `OPENAI_API_KEY` |
 | LLM | Anthropic API key (or OpenAI-compatible) | `ANTHROPIC_API_KEY` |
 | Tools | `ffmpeg`, `uv`, Python 3.12, `yt-dlp` (keep it updated, since platforms break it often) | — |
 
-Secrets go in `.env` (git-ignored). `cookies.txt` and exports are never committed.
+Secrets go in `.env` (git-ignored). `cookies.txt`, `secrets/` and exports are never committed. **`cookies.txt` is equivalent to being logged in to your account**, so keep it private and delete it when you're done.
 
 ---
 
@@ -298,14 +358,19 @@ mealie_pipeline/
   pyproject.toml
   .env.example
   config/
-    settings.yaml          # domains allowlist, thresholds, languages, model names
+    sources.yaml           # your saved-list URLs
+    settings.yaml          # thresholds, rate limits, languages, model names
+    classify_rules.yaml    # pro/anti recipe keyword signals
     tag_rules.yaml
     site_selectors.yaml    # per-site recipe-card CSS selectors
     units.yaml             # unit synonym table → Mealie units
   src/mealie_pipeline/
-    cli.py                 # `mp discover|scrape|transcribe|extract|parse|tag|verify|upload|report|run --limit 20`
+    cli.py                 # `mp login|collect|classify|dedupe|scrape|transcribe|extract|parse|tag|verify|upload|report|run --limit 20`
     db.py                  # SQLite state
-    sources/{youtube,instagram,facebook}.py
+    collect/{youtube.py,instagram.py,facebook.py,browser.py,normalize.py}   # saved-list → video URLs
+    classify/{signals.py,llm.py,review.py}                                  # recipe vs restaurant/ad/travel
+    dedupe.py
+    sources/{youtube,instagram,facebook}.py                                 # per-video metadata
     scrape/{links.py,fetch.py,structured.py,plugins.py,fallback_text.py}   # our own website scraper
     transcribe/{subs,faster_whisper,groq,openai,ocr}.py
     extract/{prompt.py,schema.py,llm.py}
@@ -324,8 +389,8 @@ mealie_pipeline/
 
 1. **M0 (setup):** answer the questions, add tokens to `.env`, run a smoke test against Mealie (`GET /api/app/about`, `/openapi.json`, list tags, foods and units, create and delete a test recipe).
 2. **M1 (scraper and parser first):** build the website scraper and ingredient parser against your example pages. You hand-check about 10 **golden recipes** (correct ingredients, quantities and tags), which become regression tests that every later change must pass.
-3. **M1b (YouTube pilot):** 10 YouTube videos end-to-end in dry-run with verification reports, then write to Mealie. You review them in the UI.
-4. **M2 (Instagram and Facebook ingest):** parse the exports or Graph API data, plus cross-platform dedupe. You review the dedupe CSV.
+3. **M1b (YouTube pilot):** collect one YouTube playlist (the easiest collector), classify it, then run 10 recipe videos end-to-end in dry-run with verification reports, then write to Mealie. You review them in the UI.
+4. **M2 (collect and classify):** collectors for all 3 platforms (`mp login`, `mp collect`), URL normalization, and the classifier. You hand-label about 50 random items, and the classifier must reach ≥ 95 % on `recipe` before we continue. You review `classification.csv` and `dedupe.csv` for the full lists.
 5. **M3 (full pilot):** 20 mixed videos. Tune the prompts, tag rules and the verification score threshold.
 6. **M4 (full run):** all videos in batches of 50, with a report after each batch.
 7. **M5 (cleanup):** work the review queue, merge duplicate foods (`PUT /api/foods/merge`), remove empty tags.
@@ -341,5 +406,7 @@ mealie_pipeline/
 - extruct: https://github.com/scrapinghub/extruct · recipe-scrapers: https://github.com/hhursev/recipe-scrapers
 - Groq speech-to-text: https://console.groq.com/docs/speech-to-text
 - Instagram Media API reference: https://developers.facebook.com/documentation/instagram-platform/reference/instagram-media
+- yt-dlp 2026.08.19 source `yt_dlp/extractor/instagram.py`, `facebook.py` (no saved/collection extractors; single post/reel URLs supported)
+- Instaloader `:saved` target: https://instaloader.github.io/basic-usage.html
 - yt-dlp releases (Instagram extractor rework mid-2026): https://github.com/yt-dlp/yt-dlp/releases
 - Pricing figures are approximate (third-party summaries, 2026). Check them on provider pages before committing.
