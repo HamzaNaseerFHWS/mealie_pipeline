@@ -75,6 +75,10 @@ The language of a recipe's name, description and steps: English, German, or Roma
 **Roman Urdu/Hindi**:
 Urdu or Hindi written in Latin script, the way creators write captions ("Pyaz ko golden hone tak bhoon lein"). Never Devanagari or Nastaliq.
 
+**Auto Sync Cycle**:
+One unattended `mp auto` run. It re-syncs the Saved Lists that are due, processes only unfinished Videos up to a cap, uploads what passes the Gate, and writes a summary. It's started by hand or by the scheduled task.
+_Avoid_: watcher, daemon, cron job
+
 ## Quality
 
 **Quality Score**:

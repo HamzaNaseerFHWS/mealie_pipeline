@@ -36,6 +36,8 @@ Every decision needed to **build and run** the pipeline over all of the user's S
 - **Per-language Whisper model:** whether Urdu/Hindi needs a different model than `large-v3-turbo`. Graduates after the benchmark runs on the laptop with an Urdu/Hindi sample (implementation ticket "Benchmark and choose the Whisper model on the laptop").
 - **Classifier calibration:** the confidence threshold and rule weights that reach ≥ 95 % on the pilot. Graduates when the pilot list is known and the classifier exists (implementation ticket "Calibrate the classifier on the pilot list").
 
+- **Auto Sync defaults:** schedule, per-platform check interval, cap per cycle, notifications. The spec has defaults (module 17, implementation tickets 23 and 24). The user confirms them in "Confirm run defaults before the full run" questions 7–10, before the schedule is switched on.
+
 ## Out of scope
 
 - On-screen text OCR for silent reels: the pipeline routes such Videos to the Review Queue with reason `needs_ocr`. OCR itself is a later effort.

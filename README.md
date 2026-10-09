@@ -10,7 +10,7 @@ Turns saved cooking videos (YouTube playlists, Instagram saved "All posts", Face
 | `.scratch/wayfinder-video-recipes/map.md` | The **wayfinder map**: decisions made so far, open decision tickets, fog, out of scope |
 | `.scratch/wayfinder-video-recipes/issues/` | Decision tickets (research / task / grilling) |
 | `.scratch/video-recipe-pipeline/spec.md` | The **spec** the build follows |
-| `.scratch/video-recipe-pipeline/issues/` | 21 **implementation tickets** (tracer-bullet slices with `Blocked by:` edges) |
+| `.scratch/video-recipe-pipeline/issues/` | 24 **implementation tickets** (tracer-bullet slices with `Blocked by:` edges) |
 | `PIPELINE_SPEC.md` | Design reference: research, Mealie API details, rationale |
 | `GLOSSARY.md`, `docs/adr/` | Domain language and recorded decisions |
 | `scripts/check_mealie.py` | Standalone Mealie API check (no install needed) |
@@ -51,6 +51,8 @@ Always start the lowest-numbered ticket whose blockers are finished (`done` for 
 19 (you + agent): after 07, 13, 14, 22, W13, W14
 W20 (you + agent): after W13, and after 04, 15, 16 are done and every list is synced. Decide the final tag set (existing, new, difficulty) before any upload
 21: after 10, 11, 12, 15, 16, 17, 18, 20 and W19 (confirm run defaults with you), W20 (tag taxonomy review)
+23 (Auto Sync Cycle, `mp auto`): after 21
+24 (schedule it in Windows Task Scheduler): after 23. Switch it on only after W19 questions 7–10
 ```
 
 Tickets that can run in parallel once 03 is done: 04, 06 and 08, plus 07 and 13 once their research tickets (W17, W18) are resolved. Parallel sessions claim a ticket by committing `Status: in-progress` first. If two sessions edit the same module, run them one after the other instead.
