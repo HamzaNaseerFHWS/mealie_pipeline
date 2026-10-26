@@ -18,7 +18,7 @@
 
 **Blocked by:** None (tickets 03, 27 and 28 are done)
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `src/mealie_pipeline/pipeline.py` (stage loop), `request_finder.py`, `store.py`, `scrape.py`; ticket 03's and 28's Comments; `docs/adr/`.
 
