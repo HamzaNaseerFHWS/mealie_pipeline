@@ -81,7 +81,7 @@ def add(
     added = duplicates = unsupported = 0
     for url in wanted:
         normalized = normalize(url)
-        if normalized is None:
+        if normalized is None or normalized.platform != "youtube":
             typer.echo(f"unsupported URL (only YouTube so far): {url}")
             unsupported += 1
         elif pipeline.add(normalized.canonical_url, url, normalized.platform, normalized.video_id):
@@ -100,6 +100,13 @@ def run(
     stages: Annotated[str | None, typer.Option(help="Comma-separated stages to run.")] = None,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Write payloads under work/payloads; no Mealie writes.")
+    ] = False,
+    upgrade_existing: Annotated[
+        bool,
+        typer.Option(
+            "--upgrade-existing",
+            help="PATCH recipes already in Mealie (matched by link) with the parsed version, in place.",
+        ),
     ] = False,
     mode: Annotated[
         str, typer.Option(help="skip: leave recipes already in Mealie alone. update: PATCH them in place.")
@@ -128,7 +135,12 @@ def run(
     previous_handler = signal.signal(signal.SIGINT, on_interrupt)
     try:
         report = pipeline.run(
-            stages=chosen, limit=limit, dry_run=dry_run, mode=mode, should_stop=lambda: interrupted
+            stages=chosen,
+            limit=limit,
+            dry_run=dry_run,
+            mode=mode,
+            upgrade_existing=upgrade_existing,
+            should_stop=lambda: interrupted,
         )
     finally:
         signal.signal(signal.SIGINT, previous_handler)
@@ -141,6 +153,15 @@ def run(
         typer.echo(f"dry run: wrote {path}")
     for line in report.warnings:
         typer.echo(f"warning {line}")
+    for line in report.already_in_mealie:
+        typer.echo(f"already_in_mealie {line}")
+    for line in report.upgraded_existing:
+        typer.echo(f"upgraded_existing {line}")
+    if report.already_in_mealie or report.upgraded_existing:
+        typer.echo(
+            f"{len(report.already_in_mealie)} already in Mealie (skipped), "
+            f"{len(report.upgraded_existing)} existing recipes upgraded"
+        )
     for line in report.review:
         typer.echo(f"REVIEW {line}")
     for line in report.failed:
@@ -167,6 +188,9 @@ def status(ctx: typer.Context) -> None:
     retried = sum(1 for p in store.parts() if (p.verify or {}).get("extraction_attempts", 1) > 1)
     held = sum(1 for p in store.parts() if (p.verify or {}).get("outcome") == "review")
     console.print(f"Gate: {held} in the Review Queue, {retried} extracted a second time after a failed check")
+    skipped = sum(n for (_stage, state), n in counts.items() if state == "already_in_mealie")
+    upgraded = sum(n for (_stage, state), n in counts.items() if state == "upgraded_existing")
+    console.print(f"Already in Mealie: {skipped}   Upgraded existing: {upgraded}")
     errors = store.recent_errors(10)
     if errors:
         console.print("\nRecent errors:")

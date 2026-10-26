@@ -113,6 +113,11 @@ class FakeMealie:
 
     # -- recipes --------------------------------------------------------------------------
 
+    def list_recipe_summaries(self) -> list[Recipe]:
+        self._auth("GET", "/api/recipes")
+        keys = ("id", "slug", "name", "orgURL")
+        return [{k: r.get(k) for k in keys} for r in self.recipes.values()]
+
     def create_recipe(self, name: str) -> str:
         self._auth("POST", "/api/recipes")
         base = slugify(name) or "recipe"
