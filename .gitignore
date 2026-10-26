@@ -20,3 +20,8 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 dist/
+
+# project-local tools (claude, ffmpeg, nltk data)
+.tools/
+logs/
+pipeline.db.bak-*
