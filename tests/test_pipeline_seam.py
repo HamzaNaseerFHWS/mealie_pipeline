@@ -329,4 +329,4 @@ def test_a_recipe_already_in_mealie_under_the_item_key_is_recorded_not_duplicate
 
 def test_unsupported_urls_are_reported(world: World):
     result = world.invoke("add", "https://example.com/not-a-video")
-    assert result.exit_code == 1 and "unsupported URL" in result.output
+    assert result.exit_code == 0 and "unsupported URL" in result.output  # reported, not fatal

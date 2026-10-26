@@ -245,3 +245,51 @@ class StateStore:
             and self.stage_status(kind, key, stage) in (None, "pending", "running")
         ]
         return ready[:limit] if limit is not None else ready
+
+    # -- status, retry and reset ----------------------------------------------------------
+
+    def stage_counts(self) -> dict[tuple[str, str], int]:
+        """`(stage, status) -> number of entities`."""
+        rows = self._db.execute(
+            "SELECT stage, status, COUNT(*) AS n FROM stage_records GROUP BY stage, status"
+        ).fetchall()
+        return {(r["stage"], r["status"]): r["n"] for r in rows}
+
+    def recent_errors(self, limit: int = 10) -> list[StageRecord]:
+        rows = self._db.execute(
+            "SELECT * FROM stage_records WHERE last_error IS NOT NULL AND last_error != ''"
+            " AND status = 'failed' ORDER BY updated_at DESC, rowid DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            StageRecord(
+                r["entity_kind"], r["entity_key"], r["stage"], r["status"], r["attempts"], r["last_error"]
+            )
+            for r in rows
+        ]
+
+    def reset_stages(
+        self, stages: list[str], *, keys: list[str] | None = None, failed_only: bool = False
+    ) -> int:
+        """Forgets the Stage Records of `stages` so they run again; returns how many were removed.
+
+        `keys` limits the reset to those entities (a Video Key also covers its Recipe Parts).
+        `failed_only` removes only the records whose status is `failed`.
+        """
+        removed = 0
+        for record in self.stage_records():
+            if record.stage not in stages:
+                continue
+            if failed_only and record.status != "failed":
+                continue
+            if keys is not None and not any(
+                record.entity_key == k or record.entity_key.startswith(f"{k}#") for k in keys
+            ):
+                continue
+            self._db.execute(
+                "DELETE FROM stage_records WHERE entity_kind = ? AND entity_key = ? AND stage = ?",
+                (record.entity_kind, record.entity_key, record.stage),
+            )
+            removed += 1
+        self._db.commit()
+        return removed

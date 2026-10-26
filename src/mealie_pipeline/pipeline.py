@@ -63,6 +63,7 @@ class Pipeline:
         self.now = now
         self._catalog: Catalog | None = None
         self._detail: dict[str, str] = {}
+        self.mode = "skip"
         units = workspace / "config" / "units.yaml"
         synonyms = yaml.safe_load(units.read_text(encoding="utf-8")) if units.is_file() else {}
         self.units = UnitNormalizer(synonyms or {})
@@ -74,9 +75,21 @@ class Pipeline:
         return self.store.add_video(f"{platform}:{video_id}", platform, video_id, url, canonical_url)
 
     def run(
-        self, *, stages: list[str] | None = None, limit: int | None = None, dry_run: bool = False
+        self,
+        *,
+        stages: list[str] | None = None,
+        limit: int | None = None,
+        dry_run: bool = False,
+        mode: str = "skip",
+        should_stop: Callable[[], bool] = lambda: False,
     ) -> RunReport:
+        """Runs the stages in order over every entity that is ready.
+
+        `should_stop` is polled between entities (Ctrl+C sets it): the entity in progress finishes,
+        then the run returns. Whatever was not reached stays pending for the next run.
+        """
         report = RunReport()
+        self.mode = mode
         wanted = stages or STAGES
         handlers: dict[str, Callable[[str, RunReport, bool], None]] = {
             "metadata": self._metadata,
@@ -97,6 +110,11 @@ class Pipeline:
                     self._preview(report, limit)
                 continue
             for key in self.store.next_batch(kind, stage, previous, limit):
+                if should_stop():
+                    report.stopped = (
+                        "Interrupted: finished the current item and stopped. Run again to continue."
+                    )
+                    return report
                 self.store.record(kind, key, stage, "running")
                 try:
                     handlers[stage](key, report, dry_run)
@@ -104,9 +122,9 @@ class Pipeline:
                     self.store.record(kind, key, stage, "pending", str(err))
                     report.stopped = f"Claude usage limit reached: {err}. Run again after it resets."
                     return report
-                except (LLMError, MealieError, VideoSourceError, StageFailure, ValidationError) as err:
-                    self.store.record(kind, key, stage, "failed", str(err))
-                    report.failed.append(f"{key} [{stage}]: {err}")
+                except Exception as err:  # one entity's failure never stops the others
+                    self.store.record(kind, key, stage, "failed", describe_error(err))
+                    report.failed.append(f"{key} [{stage}]: {describe_error(err)}")
                 else:
                     self.store.record(kind, key, stage, "done", self._detail.pop(key, None))
                     report.count(stage)
@@ -168,7 +186,7 @@ class Pipeline:
         mealie = self.a.mealie
 
         existing = mealie.find_recipe(item_key=item_key)
-        if existing is not None and existing.get("recipeIngredient"):
+        if existing is not None and existing.get("recipeIngredient") and self.mode != "update":
             slug = str(existing["slug"])  # already uploaded earlier: record it, write nothing
             self.store.update_part(item_key, slug=slug, mealie_url=mealie.recipe_url(slug))
             report.uploaded.append(f"{item_key}: {mealie.recipe_url(slug)} (already in Mealie)")
@@ -301,6 +319,12 @@ class Pipeline:
             if new_file:
                 writer.writerow(["name", "first_video_key", "created_at"])
             writer.writerow([name, video_key, self.now().isoformat(timespec="seconds")])
+
+
+def describe_error(err: Exception) -> str:
+    """Expected failures show their message; unexpected ones also name their type."""
+    expected = (LLMError, MealieError, VideoSourceError, StageFailure, ValidationError)
+    return str(err) if isinstance(err, expected) else f"unexpected {type(err).__name__}: {err}"
 
 
 class StageFailure(Exception):

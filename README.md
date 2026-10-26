@@ -67,3 +67,29 @@ Tickets that can run in parallel once 03 is done: 04, 06 and 08, plus 07 and 13 
 ### When an agent finishes a ticket
 
 It sets `Status: done`, adds a `## Comments` section with what it built and the **manual check on the laptop** for you, and commits. Do the manual check when you're at the laptop, and note the result in the ticket.
+
+## Running batches (`mp`)
+
+```
+uv run mp add --file urls.txt        # blank lines and # comments are ignored; duplicates and unsupported URLs are reported
+uv run mp run --limit 20             # at most 20 items per stage; run again to continue
+uv run mp status                     # per-stage counts, totals, the 10 latest errors
+uv run mp retry <item_key|video_key> [--stage tag]   # run a failed item again (from the failed stage)
+uv run mp reset <stage> [--failed-only]              # run a stage (and the later ones) again for everything
+uv run mp run --mode update          # after a reset: PATCH recipes already in Mealie instead of skipping them
+uv run mp report                     # writes reports/report.csv
+```
+
+Ctrl+C finishes the item in progress, then stops; the next `mp run` continues. A failed item is never retried by itself.
+
+`reports/report.csv` (UTF-8 with BOM, opens in Excel) has one row per Recipe Part, plus one row for a Video that has no Recipe Part yet (for example its metadata failed):
+
+| Column | Meaning |
+|---|---|
+| `item_key`, `video_url`, `platform` | identity of the Recipe Part and where it came from |
+| `metadata_status` … `upload_status` | one column per stage: `pending`, `running`, `done`, `failed`, `skipped`, `review`; empty = not reached |
+| `failure_reason` | `<stage>: <last error>` of the first failed stage |
+| `mealie_slug`, `mealie_url` | where the recipe is in Mealie |
+| `created_foods` | Foods first created for this Video |
+| `tags` | tag names, `;`-separated |
+| `warnings` | for example `image_missing` |
