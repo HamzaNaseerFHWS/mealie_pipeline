@@ -61,3 +61,14 @@
 2. `uv run mp requests`: the pending count matches; open `reports/requests.csv` in Excel (umlauts correct).
 3. Run the same `add` again: "0 new, N already known".
 4. Try a semicolon CSV exported from German Excel, and an `.xlsx` with `--sheet`.
+
+### Follow-up: the grid layout (the user's real sheet)
+
+The user's real sheet is a **grid**, not a list: row 1 holds category titles ("Gerichte – Frühstück / Brunch", "Getränke", "Proteins", ...) and every cell below, in every column, is one standalone recipe name; columns have different lengths. It produces **379 Recipe Requests from 19 columns** (rows 2-31; verified against an independent count of the non-empty cells). 14 names occur in several cells (Butter Chicken, Haleem, Baked Oats, Waffeln, Grießbrei, ...) and stay separate requests, each with its own category.
+
+- `mp requests add --layout auto|list|grid` (default `auto`). `auto` picks **grid** when row 1 has no recognised header (`name`/`recipe`/`title`/`rezept`, `url`, `language`, `notes`, `cuisine` and the German spellings) and at least two columns have a title; otherwise **list**. A one-column sheet is always a list unless `--layout grid` is given; a header row that has list headers but no name column is still the "no name column" error (which now mentions `--layout grid`). The output says which layout was used and how it was chosen, e.g. `layout: grid (auto-detected); 379 request(s) from 19 column(s)`, and lists names that appear in several cells.
+- Each request stores its **category** (the column title) and **position** (`R2C1`; `Sheet!R2C1` for an Excel worksheet). Both are columns of `reports/requests.csv` (`row_number, position, name, category, notes, cuisine, status, ...`) and `mp requests` now also prints a requests table (cell, category, name, status; `--show N`, default 25). Ticket 27 can use the category as a search hint.
+- **Identity:** a grid cell is known by sheet position + normalized name, so re-adding the file is idempotent, the same recipe in two columns is two requests, and a changed cell is added as new. `mp requests retry` accepts a cell (`R2C2`), a row number or a name (a name resets every cell with that name).
+- XLSX follows the same rules (all rows and columns, `--sheet` for each worksheet; positions are true to the sheet even if the data does not start at A1).
+- Store migration 4 adds `category`, `position`, `layout` and `identity` to `recipe_requests` (migration 3 is unchanged, so a database already migrated keeps working).
+- Fixture: `tests/fixtures/recipe_grid.csv` is a synthetic 5-column, 24-cell grid with the same shape (en dashes, umlauts, a quoted cell with commas, a leading space, empty cells, names repeated across and within columns). The real file is not committed.

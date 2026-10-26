@@ -240,8 +240,11 @@ def _open_requests(ctx: typer.Context) -> tuple[RecipeRequests, Path]:
 
 
 @requests_app.callback(invoke_without_command=True)
-def requests_list(ctx: typer.Context) -> None:
-    """Without a subcommand: status counts and the latest errors."""
+def requests_list(
+    ctx: typer.Context,
+    show: Annotated[int, typer.Option(help="How many requests to list (0 = none).")] = 25,
+) -> None:
+    """Without a subcommand: status counts, the requests (with category and cell) and the latest errors."""
     if ctx.invoked_subcommand is not None:
         return
     requests, workspace = _open_requests(ctx)
@@ -254,6 +257,16 @@ def requests_list(ctx: typer.Context) -> None:
     console = Console(width=120)
     console.print(table)
     console.print(f"Requests: {sum(counts.values())}")
+    everything = requests.all()
+    if show > 0 and everything:
+        listing = Table(title="Requests")
+        for column in ("cell", "category", "name", "status"):
+            listing.add_column(column)
+        for r in everything[:show]:
+            listing.add_row(r.position or "", r.category or "", r.name, r.status)
+        console.print(listing)
+        if len(everything) > show:
+            console.print(f"... and {len(everything) - show} more (all of them are in reports/requests.csv)")
     errors = requests.recent_errors(10)
     if errors:
         console.print("\nRecent errors:")
@@ -267,17 +280,34 @@ def requests_add(
     ctx: typer.Context,
     file: Annotated[Path, typer.Option("--file", help="A .csv or .xlsx with a header row.")],
     sheet: Annotated[str | None, typer.Option(help="Worksheet name (default: the first).")] = None,
+    layout: Annotated[
+        str,
+        typer.Option(
+            help="auto, list (one recipe per row, header with a name column) or grid "
+            "(category titles in row 1, a recipe in every cell below)."
+        ),
+    ] = "auto",
 ) -> None:
-    """Register one Recipe Request per row of a CSV or Excel sheet of recipe names."""
+    """Register one Recipe Request per recipe name in a CSV or Excel sheet."""
     requests, workspace = _open_requests(ctx)
     try:
-        parsed = read_sheet(file, sheet)
+        parsed = read_sheet(file, sheet, layout)
     except (SheetError, OSError) as err:
         typer.echo(f"cannot import {file}: {err}")
         raise typer.Exit(2) from err
     new, known = requests.add_rows(parsed.rows, file.name)
+    how = "auto-detected" if layout == "auto" else "chosen with --layout"
+    typer.echo(
+        f"layout: {parsed.layout} ({how}); {len(parsed.rows)} request(s) from {parsed.columns} column(s)"
+    )
     for warning in parsed.warnings:
         typer.echo(f"warning {warning}")
+    if parsed.repeated:
+        names = "; ".join(parsed.repeated)
+        typer.echo(
+            f"{len(parsed.repeated)} name(s) appear in more than one cell and are kept as separate "
+            f"requests with their own category: {names}"
+        )
     if parsed.duplicates:
         names = "; ".join(parsed.duplicates)
         typer.echo(f"{len(parsed.duplicates)} duplicate name(s) in the sheet, registered once: {names}")
@@ -287,7 +317,8 @@ def requests_add(
 
 @requests_app.command("retry")
 def requests_retry(
-    ctx: typer.Context, ref: Annotated[str, typer.Argument(help="A row number or a recipe name.")]
+    ctx: typer.Context,
+    ref: Annotated[str, typer.Argument(help="A cell like R2C1, a row number or a recipe name.")],
 ) -> None:
     """Put a request back to pending so the next run tries it again."""
     requests, workspace = _open_requests(ctx)

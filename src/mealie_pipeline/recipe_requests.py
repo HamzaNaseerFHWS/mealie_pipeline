@@ -6,6 +6,7 @@ only registers, lists, resets and reports them.
 
 import csv
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,9 @@ FINISHED = ("imported", "already_in_mealie")
 
 REPORT_COLUMNS = [
     "row_number",
+    "position",
     "name",
+    "category",
     "notes",
     "cuisine",
     "status",
@@ -56,6 +59,8 @@ class RecipeRequest:
     score: float | None
     reason: str | None
     last_error: str | None
+    category: str | None = None
+    position: str | None = None
 
 
 class RecipeRequests:
@@ -65,26 +70,38 @@ class RecipeRequests:
         self.db = store.db
 
     def add_rows(self, rows: list[SheetRow], source_file: str) -> tuple[int, int]:
-        """Registers rows; a row matching a known request by name or URL is left alone.
+        """Registers rows and returns `(new, already_known)`.
 
-        Returns `(new, already_known)`.
+        A list-layout row is known when a request has the same normalized name or URL. A grid-layout
+        row is one cell: it is known when a request has the same sheet position and name, so the same
+        recipe in several columns stays several requests, each with its own category.
         """
         known_names = {r["name_key"] for r in self.db.execute("SELECT name_key FROM recipe_requests")}
         known_urls = {
             r["url_key"]
             for r in self.db.execute("SELECT url_key FROM recipe_requests WHERE url_key IS NOT NULL")
         }
+        known_cells = {
+            r["identity"]
+            for r in self.db.execute("SELECT identity FROM recipe_requests WHERE identity LIKE 'cell:%'")
+        }
         new = known = 0
         for row in rows:
             name_key = normalize_name(row.name)
             url_key = normalize_url(row.url) if row.url else None
-            if name_key in known_names or (url_key and url_key in known_urls):
+            if row.layout == "grid":
+                identity = f"cell:{row.position}|{name_key}"
+                is_known = identity in known_cells
+            else:
+                identity = f"name:{name_key}"
+                is_known = name_key in known_names or bool(url_key and url_key in known_urls)
+            if is_known:
                 known += 1
                 continue
             self.db.execute(
                 "INSERT INTO recipe_requests (row_number, source_file, name, name_key, url, url_key,"
-                " language, notes, cuisine, added_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                " language, notes, cuisine, category, position, layout, identity, added_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
                 (
                     row.row_number,
                     source_file,
@@ -95,9 +112,14 @@ class RecipeRequests:
                     row.language,
                     row.notes,
                     row.cuisine,
+                    row.category,
+                    row.position,
+                    row.layout,
+                    identity,
                 ),
             )
             known_names.add(name_key)
+            known_cells.add(identity)
             if url_key:
                 known_urls.add(url_key)
             new += 1
@@ -124,6 +146,8 @@ class RecipeRequests:
                 r["score"],
                 r["reason"],
                 r["last_error"],
+                r["category"],
+                r["position"],
             )
             for r in rows
         ]
@@ -137,7 +161,15 @@ class RecipeRequests:
         return sorted(wanted, key=lambda r: r.id, reverse=True)[:limit]
 
     def find(self, ref: str) -> list[RecipeRequest]:
-        """Requests matching a row number or a name (case/space-insensitive)."""
+        """Requests matching a cell position (`R2C1`), a row number or a name (case/space-insensitive)."""
+        if re.fullmatch(r"(.+!)?R\d+C\d+", ref.strip(), re.IGNORECASE):
+            wanted = ref.strip().casefold()
+            return [
+                r
+                for r in self.all()
+                if (r.position or "").casefold() == wanted
+                or (r.position or "").casefold().endswith("!" + wanted)
+            ]
         if ref.strip().isdigit():
             return [r for r in self.all() if r.row_number == int(ref)]
         key = normalize_name(ref)
@@ -179,7 +211,9 @@ def write_requests_report(requests: RecipeRequests, workspace: Path) -> Path:
             writer.writerow(
                 {
                     "row_number": r.row_number,
+                    "position": r.position or "",
                     "name": r.name,
+                    "category": r.category or "",
                     "notes": r.notes or "",
                     "cuisine": r.cuisine or "",
                     "status": r.status,

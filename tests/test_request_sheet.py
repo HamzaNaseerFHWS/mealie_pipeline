@@ -47,9 +47,16 @@ def test_all_optional_columns_are_read_in_any_order(tmp_path):
     first, second = read_sheet(write_csv(tmp_path, text)).rows
 
     assert first == SheetRow(
-        2, "Chicken Karahi", "https://example.com/karahi", "ur", "extra spicy", "Pakistani"
+        2,
+        "Chicken Karahi",
+        "https://example.com/karahi",
+        "ur",
+        "extra spicy",
+        "Pakistani",
+        column=3,
+        position="R2C3",
     )
-    assert second == SheetRow(3, "Käsespätzle", None, "de", None, "German")
+    assert second == SheetRow(3, "Käsespätzle", None, "de", None, "German", column=3, position="R3C3")
 
 
 def test_a_semicolon_csv_with_umlauts_and_a_bom(tmp_path):
@@ -101,10 +108,9 @@ def test_a_bad_url_or_language_is_ignored_with_a_warning_but_the_row_stays(tmp_p
     assert len(parsed.warnings) == 2
 
 
-@pytest.mark.parametrize("text", ["url,notes\nhttps://x.com,hi\n", "dal,roti\nnaan,rice\n"])
-def test_a_missing_name_column_names_the_accepted_headers(tmp_path, text):
+def test_a_header_row_without_a_name_column_names_the_accepted_headers(tmp_path):
     with pytest.raises(SheetError, match="name, recipe, title, rezept"):
-        read_sheet(write_csv(tmp_path, text))
+        read_sheet(write_csv(tmp_path, "url,notes\nhttps://x.com,hi\n"))
 
 
 def test_an_empty_file_is_an_error(tmp_path):

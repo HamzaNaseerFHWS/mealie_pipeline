@@ -194,11 +194,14 @@ def test_requests_csv_has_one_row_per_request_and_is_utf8_with_bom(workspace):
     with path.open(encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert list(rows[0]) == [
-        "row_number", "name", "notes", "cuisine", "status", "chosen_url", "mealie_url", "score", "reason",
+        "row_number", "position", "name", "category", "notes", "cuisine", "status", "chosen_url",
+        "mealie_url", "score", "reason",
     ]  # fmt: skip
     assert rows[0] == {
         "row_number": "2",
+        "position": "R2C1",
         "name": "Käsespätzle",
+        "category": "",
         "notes": "mit Röstzwiebeln",
         "cuisine": "German",
         "status": "pending",

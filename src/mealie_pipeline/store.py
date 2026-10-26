@@ -74,6 +74,14 @@ MIGRATIONS = [
         updated_at TEXT NOT NULL
     );
     """,
+    # Migration 4: where each request sits in the sheet and which category column it came from.
+    """
+    ALTER TABLE recipe_requests ADD COLUMN category TEXT;
+    ALTER TABLE recipe_requests ADD COLUMN position TEXT;
+    ALTER TABLE recipe_requests ADD COLUMN layout TEXT NOT NULL DEFAULT 'list';
+    ALTER TABLE recipe_requests ADD COLUMN identity TEXT;
+    UPDATE recipe_requests SET position = 'R' || row_number || 'C1', identity = 'name:' || name_key;
+    """,
 ]
 
 PART_JSON_FIELDS = {"extracted", "parsed", "tags", "verify"}

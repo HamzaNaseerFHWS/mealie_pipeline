@@ -102,10 +102,15 @@ Every recipe is scored before upload: `>= 80` uploads, `60-79` uploads with the 
 ## Recipe Requests (a sheet of recipe names)
 
 ```
-uv run mp requests add --file recipes.xlsx [--sheet "Sheet1"]   # or recipes.csv; one Recipe Request per row
-uv run mp requests                                              # status counts and the latest errors
-uv run mp requests retry <row number | name>                    # back to pending
+uv run mp requests add --file recipes.xlsx [--sheet "Sheet1"] [--layout auto|list|grid]
+uv run mp requests [--show 25]                                  # status counts, the requests with cell + category, latest errors
+uv run mp requests retry <cell like R2C1 | row number | name>   # back to pending
 uv run mp requests reset --failed-only
 ```
 
-First row = header. Columns (any order, case-insensitive): `name` (also `recipe`, `title`, `rezept`; required), `url`, `language` (`en`, `de`, `ur`/`hi`), `notes`, `cuisine` (German `sprache`, `notizen`, `küche` work too). A single column with no header is a plain list of names. CSV: UTF-8 with or without BOM, comma/semicolon/tab sniffed. Blank rows and rows starting with `#` are ignored, duplicate names are registered once, and importing the same file again adds nothing ("N new, M already known"). `reports/requests.csv` is rewritten after every command. Old `.xls` files are rejected: save as `.xlsx` or `.csv`. Finding the pages and importing them is tickets 27 and 28.
+Two layouts, picked automatically (`--layout auto`, the default) and reported in the output:
+
+* **grid**: row 1 holds category titles (one per column) and **every cell below, in every column, is one recipe name**; columns may differ in length (empty cells are skipped). One request per cell, each remembering its category (the column title) and its position (`R2C1`, or `Sheet!R2C1` in an Excel file). The same name in several cells stays several requests. Chosen when row 1 has no recognised header and the sheet has two or more titled columns.
+* **list**: a header row with a `name` column (also `recipe`, `title`, `rezept`; optional `url`, `language` (`en`, `de`, `ur`/`hi`), `notes`, `cuisine`; German `sprache`, `notizen`, `küche` work too), one recipe per row. A single column with no header is a plain list of names. Duplicate names in the sheet are registered once.
+
+CSV: UTF-8 with or without BOM, comma/semicolon/tab sniffed (the file may be called `.csv.csv`). Excel: the first worksheet or `--sheet`, all rows and columns. Blank rows, empty cells and `#` cells are ignored; names are trimmed. Importing the same file again adds nothing ("N new, M already known"; a grid cell is known by its position and name). `reports/requests.csv` (row, cell, name, category, notes, cuisine, status, chosen URL, Mealie link, score, reason) is rewritten after every `mp requests` command. Old `.xls` files are rejected: save as `.xlsx` or `.csv`. Finding the pages and importing them is tickets 27 and 28.
