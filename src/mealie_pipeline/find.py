@@ -225,4 +225,6 @@ def decide(candidates: list[Candidate], cfg: FindSettings) -> tuple[Decision, li
     lead = best.score - ranked[1].score if len(ranked) > 1 else 1.0
     if best.score >= cfg.accept_score and lead >= cfg.accept_lead:
         return "found", ranked[:3]
+    if cfg.accept_first_score is not None and best.score >= cfg.accept_first_score:
+        return "found", ranked[:3]  # near-identical candidates: the first one is good enough
     return "needs_choice", ranked[:3]

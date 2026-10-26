@@ -182,6 +182,24 @@ def test_a_page_whose_recipe_name_does_not_resemble_the_request_is_no_candidate(
     assert candidate("x", page(recipe_json("Chocolate Brownies"))) is None
 
 
+def test_tied_candidates_take_the_first_when_it_clears_accept_first_score():
+    a = candidate("x", page(recipe_json("Chicken Karahi")), url="https://a.example/k")
+    b = candidate("x", page(recipe_json("Chicken Karahi")), url="https://b.example/k")
+    assert a and b
+
+    decision, top = decide([a, b], FindSettings(accept_first_score=0.9))
+
+    assert decision == "found" and top[0].url == "https://a.example/k"
+
+
+def test_accept_first_score_does_not_rescue_tied_candidates_scoring_below_it():
+    a = candidate("x", page(recipe_json("Chicken Karahi")), url="https://a.example/k")
+    b = candidate("x", page(recipe_json("Chicken Karahi")), url="https://b.example/k")
+    assert a and b
+
+    assert decide([a, b], FindSettings(accept_first_score=a.score + 0.01))[0] == "needs_choice"
+
+
 def test_two_near_identical_candidates_need_a_choice():
     a = candidate("x", page(recipe_json("Chicken Karahi")), url="https://a.example/k")
     b = candidate("x", page(recipe_json("Chicken Karahi")), url="https://b.example/k")

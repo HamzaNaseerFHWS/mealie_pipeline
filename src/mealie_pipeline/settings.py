@@ -68,6 +68,7 @@ class FindSettings(BaseModel):
     search_delay_seconds: float = 3.0  # between two queries to the same source
     accept_score: float = 0.75  # the best candidate needs at least this ...
     accept_lead: float = 0.1  # ... and this much lead over the runner-up, else the user chooses
+    accept_first_score: float | None = None  # a best candidate this good is taken even without a lead
     min_name_similarity: float = 0.35  # a page whose recipe name is less alike than this is no candidate
     weights: dict[str, float] = Field(
         default_factory=lambda: {"name": 0.5, "structure": 0.15, "completeness": 0.2, "language": 0.15}
