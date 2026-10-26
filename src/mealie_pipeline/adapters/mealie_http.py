@@ -131,6 +131,9 @@ class MealieHttpGateway:
 
     # -- recipes --------------------------------------------------------------------------
 
+    def list_recipe_summaries(self) -> list[Recipe]:
+        return self._items("/api/recipes")
+
     def create_recipe(self, name: str) -> str:
         return self._request("POST", "/api/recipes", json={"name": name}).json()
 

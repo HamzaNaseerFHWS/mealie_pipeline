@@ -112,6 +112,8 @@ class FakeMealieServer:
         return data
 
     def _query_recipes(self, query_filter: str) -> Response:
+        if not query_filter:
+            return _json({"items": self.fake.list_recipe_summaries()})
         if m := re.fullmatch(r'org_url="(.*)"', query_filter):
             found = self.fake.find_recipe(org_url=m.group(1))
         elif m := re.fullmatch(r'extras\.key="item_key" AND extras\.value="(.*)"', query_filter):

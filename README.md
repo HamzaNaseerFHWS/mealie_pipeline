@@ -98,3 +98,18 @@ Ctrl+C finishes the item in progress, then stops; the next `mp run` continues. A
 ## The Gate (`verify` stage)
 
 Every recipe is scored before upload: `>= 80` uploads, `60-79` uploads with the `To Review` tag (created once if missing), below 60 or a failed hard check is extracted once more (strongest model, the findings in the prompt) and otherwise held back in `review/<item_key>.md` (Sources next to the extracted recipe and every failed check) and not uploaded. Ingredients whose quoted evidence is not in the source are dropped. Thresholds and weights are in `config/settings.yaml` under `verify:`. The LLM judge (one extra Claude call) runs only when the score before it is below 90.
+
+## Recipes already in Mealie (`linkcheck` stage)
+
+Every recipe in Mealie carries its original link in `orgURL`. Before any paid work the pipeline lists those links once (`GET /api/recipes?perPage=-1`), turns each into a key (Video Key such as `instagram:ABC`, or a normalized website URL) and checks the Video against that set. A Video that is already there is marked `already_in_mealie` with a link to the existing recipe and goes no further: no Claude call, no Mealie write. The set is checked again right before upload. The link is the identity; recipe names are never compared.
+
+```
+uv run mp run --stages metadata,linkcheck --dry-run     # see which Videos are already in Mealie (no AI, no writes)
+uv run mp run --upgrade-existing                        # opt-in: PATCH an old import in place instead of skipping it
+```
+
+`--upgrade-existing` replaces the old recipe's ingredients and steps with the parsed ones, adds the pipeline's tags to its own and merges `extras`. Its name, image, rating, comments and dates are left alone. Without the flag, recipes the pipeline did not create are never written to. `mp status` and the run summary show the `already_in_mealie` and `upgraded_existing` counts.
+
+## Recipe websites (`scrape` stage)
+
+When a Video's description or the creator's pinned comment links to a recipe page, `mp run` reads that page and gives the recipe to `extract` as the top-priority `[SRC:web]` Source (the website's exact quantities win; the description only fills gaps). Short links (`bit.ly`, `tinyurl`, `geni.us`, ...) are expanded; social, shop and affiliate links are ignored. The website's own image is preferred as the recipe image. Pages are fetched politely (real browser User-Agent, `robots.txt` honoured except for `web.robots_allowlist`, at least 2 s per domain) and cached in `data/web_cache/`; what was found is kept in `data/youtube/<id>/web.json`. A page that blocks plain requests (403/429 or a challenge page) is recorded as `needs_browser` and the Video still imports from its description. Recipe-card selectors (WPRM, Tasty, Mediavine) live in `config/site_selectors.yaml`; fetch settings are under `web:` in `config/settings.yaml`.

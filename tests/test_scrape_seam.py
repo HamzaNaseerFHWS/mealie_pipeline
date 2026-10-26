@@ -307,6 +307,17 @@ def test_the_page_is_fetched_once_even_if_the_run_is_repeated(world: WebWorld):
     assert world.web.fetched == [PAGE_URL]  # `reset extract` does not redo `scrape`
 
 
+def test_a_video_already_in_mealie_is_not_scraped_or_extracted(world: WebWorld):
+    slug = world.mealie.create_recipe("Old import")
+    world.mealie.patch_recipe(slug, {"orgURL": CANONICAL})
+
+    result = run(world)
+
+    assert result.exit_code == 0, result.output
+    assert world.web.fetched == [] and world.web.expanded == [] and world.llm.calls == []
+    assert world.store().stage_status("video", VIDEO_KEY, "scrape") is None
+
+
 def test_report_shows_the_scrape_stage(world: WebWorld):
     run(world)
     world.invoke("report")
