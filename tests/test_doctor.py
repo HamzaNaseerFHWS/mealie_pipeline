@@ -3,10 +3,10 @@
 import pytest
 from typer.testing import CliRunner
 
-from mealie_pipeline.adapters import Adapters
 from mealie_pipeline.adapters.fake_mealie import FakeMealie
 from mealie_pipeline.adapters.fake_system import FakeSystemProbe
 from mealie_pipeline.cli import app
+from tests.helpers import fake_adapters
 
 TOKEN = "test-token-1234567890"
 
@@ -36,7 +36,7 @@ def system():
 
 
 def doctor(workspace, mealie, system):
-    adapters = Adapters(mealie=mealie, system=system)
+    adapters = fake_adapters(mealie=mealie, system=system)
     return CliRunner().invoke(app, ["--workspace", str(workspace), "doctor"], obj=adapters)
 
 

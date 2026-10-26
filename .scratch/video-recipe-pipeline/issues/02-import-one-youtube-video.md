@@ -10,35 +10,68 @@ The full Gate, the second parse engine, rule tags, multi-recipe and languages co
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Read first:** `spec.md` modules 1, 2, 3 (`LLMBackend`, `VideoSource`), 9, 10, 13; `PIPELINE_SPEC.md` §2b "AI backend" for the exact `claude -p` flags; `docs/adr/0002`, `0003`.
 
-- [ ] The State Store holds Videos, Recipe Parts and Stage Records with versioned migrations. Its public queries are what tests assert on.
-- [ ] `LLMBackend` port with `ClaudeCliBackend` and `FakeLLM`:
+- [x] The State Store holds Videos, Recipe Parts and Stage Records with versioned migrations. Its public queries are what tests assert on.
+- [x] `LLMBackend` port with `ClaudeCliBackend` and `FakeLLM`:
   - The backend builds the `claude -p` argument list exactly as specified: `--safe-mode`, `--tools ""`, `--output-format json`, `--json-schema`, `--no-session-persistence`, `--system-prompt-file`, `--model` from the tier. It never passes `--bare`.
   - The prompt goes on UTF-8 stdin, and the JSON Schema is generated from the pydantic model.
   - It parses `structured_output` and raises `LLMError` on `is_error` or a non-zero exit.
   - It is contract-tested against a stub `claude` executable placed first on PATH that replays recorded JSON (success and error cases).
-- [ ] The extraction prompt (`prompts/extract.md`) states the rules: never invent quantities (use "to taste" + `quantity_stated=false`), one ingredient per line, English Ingredient Lines with `original_line` kept, Sections preserved, verbatim Evidence quotes, and tag choices only from the provided enum.
-- [ ] The Food Matcher and Unit Normalizer are pure and table-tested: exact, plural, alias, singularized, fuzzy ≥ 92, new. Creating Foods/Units is serialised and logged to `reports/created_foods.csv` / `created_units.csv`.
-- [ ] The payload builder is pure and tested:
+- [x] The extraction prompt (`prompts/extract.md`) states the rules: never invent quantities (use "to taste" + `quantity_stated=false`), one ingredient per line, English Ingredient Lines with `original_line` kept, Sections preserved, verbatim Evidence quotes, and tag choices only from the provided enum.
+- [x] The Food Matcher and Unit Normalizer are pure and table-tested: exact, plural, alias, singularized, fuzzy ≥ 92, new. Creating Foods/Units is serialised and logged to `reports/created_foods.csv` / `created_units.csv`.
+- [x] The payload builder is pure and tested:
   - ISO-8601 durations, Section `title` on the first ingredient of each Section, a fresh `referenceId` per ingredient
   - `orgURL` = canonical Video URL
   - `extras` = `{item_key, video_key, part: 1, of: 1, platform, pipeline_version}`
-- [ ] **Recipe image** (the pipeline fetches it itself; Mealie never scrapes the Video page):
+- [x] **Recipe image** (the pipeline fetches it itself; Mealie never scrapes the Video page):
   - **YouTube:** download `https://i.ytimg.com/vi/<id>/maxresdefault.jpg`, falling back to `hqdefault.jpg` on 404 or the tiny placeholder image (≤ 120 px wide).
   - **Other platforms:** the `thumbnail` from yt-dlp metadata.
   - **Order of attempts:** upload the local file with `upload_image`. If that fails, try `set_image_from_url` with the thumbnail URL. If that fails too, the recipe **stays uploaded**: the item is marked `image_missing` in the report (a warning, not a failure) and the run continues.
   - **Tests:** the pure fallback logic is table-tested, and a pipeline-seam test covers "file upload fails, URL works" and "both fail, recipe still present".
-- [ ] The upload stage records the Mealie slug and the recipe link (`recipe_url(slug)`) in the State Store, and prints the link.
-- [ ] Upload reads the recipe back and fails the item (Stage Record `failed`, reason recorded) if the ingredient count, any food id, or the tags differ from what was sent.
-- [ ] Pipeline-seam test: a fake `VideoSource` returns an `info.json` fixture whose description holds a full recipe, `FakeLLM` returns a recorded extraction, and `FakeMealie` starts with tags and some foods. After `mp add` + `mp run`, `FakeMealie` holds exactly one recipe with all ingredients linked to food ids, ≥ 1 existing tag and the thumbnail. A second `mp run` makes no new writes.
-- [ ] `--dry-run` writes the payload JSON under `work/` and makes no Mealie writes.
+- [x] The upload stage records the Mealie slug and the recipe link (`recipe_url(slug)`) in the State Store, and prints the link.
+- [x] Upload reads the recipe back and fails the item (Stage Record `failed`, reason recorded) if the ingredient count, any food id, or the tags differ from what was sent.
+- [x] Pipeline-seam test: a fake `VideoSource` returns an `info.json` fixture whose description holds a full recipe, `FakeLLM` returns a recorded extraction, and `FakeMealie` starts with tags and some foods. After `mp add` + `mp run`, `FakeMealie` holds exactly one recipe with all ingredients linked to food ids, ≥ 1 existing tag and the thumbnail. A second `mp run` makes no new writes.
+- [x] `--dry-run` writes the payload JSON under `work/` and makes no Mealie writes.
 
 **Manual check on the laptop (user):** `uv run mp add <a YouTube recipe video with ingredients in its description>` then `uv run mp run`. Open the recipe in Mealie and confirm the ingredients show amount, unit and food, and that it has a tag. Paste the Mealie link into Comments.
 
 ## Comments
+
+### Built (2026-10-26)
+
+`mp add <url…> | --file` and `mp run [--limit N] [--stages a,b] [--dry-run]` take a YouTube Video from URL to a parsed, tagged recipe in Mealie: `metadata` (yt-dlp) → `extract` (one `claude -p` call, description as the only Source) → `parse` (engine A + Unit Normalizer + Food Matcher, creating missing Foods/Units) → `tag` → `upload` (create, PATCH, thumbnail, read-back). Re-running changes nothing that is `done`.
+
+- **State Store** (`store.py`): SQLite `pipeline.db`, versioned migrations (`PRAGMA user_version`), Videos / Recipe Parts / Stage Records. `next_batch` skips `done`, `skipped` and `failed` entities, so a failed item is not retried automatically (ticket 03 adds `mp retry` / `mp reset`).
+- **LLM backend** (`adapters/llm.py`): `ClaudeCliBackend` builds exactly the specified argument list (never `--bare`), prompt on UTF-8 stdin, JSON Schema generated from the pydantic model with the existing Mealie tag names injected as an enum, reads `structured_output`, raises `LLMError` / `UsageLimited`. Contract-tested against a stub `claude` on PATH (`tests/test_claude_cli_backend.py`). `FakeLLM` is scripted by task and prompt substring.
+- **Prompt:** `prompts/extract.md`.
+- **Pure modules, table-tested:** Unit Normalizer + Food Matcher (`matching.py`, synonyms in `config/units.yaml`), payload builder (`payload.py`), thumbnail selection (`images.py`), YouTube URL normalizer (`url_normalizer.py`, YouTube only for now).
+- **Images:** YouTube `maxresdefault.jpg` → `hqdefault.jpg` (404 or ≤ 120 px placeholder skipped) → local file upload → `set_image_from_url` → otherwise the recipe stays and gets `image_missing` (a warning in the run output and the part's `warnings`).
+- **Created Foods/Units** are logged to `reports/created_foods.csv` / `created_units.csv` with the Video Key they first came from. New Foods keep the pipeline's lower-case spelling (`cumin seeds`); reuse keeps the catalog's (`Salt`).
+- **Dry run:** `extract` still runs and is recorded (it costs LLM usage); parse/tag/payload are previewed in memory, written to `work/payloads/<item_key>.json`, with no Mealie writes of any kind (no Foods or Units created either), and nothing past `extract` is recorded, so a later real run still uploads.
+
+### Decisions and deviations
+
+- `Food` now carries `aliases` (read from Mealie's `aliases`), so the matcher can do the "alias" step.
+- Fuzzy matching (≥ 92) refuses to merge foods that differ by a distinguishing word (seeds, powder, oil, paste…), as the live evidence above asked ("cumin seeds" vs "cumin powder").
+- Range quantities ("1-2 tbsp") use the lower bound; the full wording stays in `originalText`.
+- Not built (later tickets): engine B and Reconcile (09), the Gate (08), rule tags (10), step `ingredientReferences`, `--mode update`, `mp status`/`retry`/`reset`/report (03), the usage governor (13). A usage limit currently just stops the run with a message and leaves the item pending.
+
+### Manual verification on the laptop (user)
+
+1. `git fetch && git checkout claude/optimistic-bell-ho0wjs`, then `uv sync`.
+2. `uv run mp doctor` (Mealie, token and `claude` login should be green).
+3. Pick a YouTube video with the ingredients **in its description**. `uv run mp add "<url>"`.
+4. **Dry run first:** `uv run mp run --dry-run`. It calls `claude` once; check `work/payloads/youtube_<id>_1.json` (ingredient foods, units, tags). Nothing is created in Mealie.
+5. `uv run mp run`. Open the printed Mealie link: ingredients show amount, unit and food, there is at least one tag, and the thumbnail is set. Paste the link into this ticket.
+6. `uv run mp run` again: it must print nothing new and create no second recipe.
+7. Check `reports/created_foods.csv` / `created_units.csv` for sensible new entries.
+
+Things to watch on first real contact: (a) the first parse downloads a small NLTK model once; (b) if `claude -p` complains about `--json-schema` quoting on Windows, tell me the exact error; (c) the video needs a non-empty description or the item fails with "no description".
+
+
 
 ### Live evidence for the Food Matcher / Unit Normalizer (hand-run, 2026-10-10, Mealie v3.22.0)
 

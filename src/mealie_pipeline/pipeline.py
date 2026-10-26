@@ -1,0 +1,328 @@
+"""The Stage Runner for the tracer-bullet path: metadata -> extract -> parse -> tag -> upload.
+
+Each stage is a function over the State Store with an `Adapters` bundle. A failure in one entity is
+recorded on its Stage Record and never stops the stage. Re-running changes nothing that is `done`.
+"""
+
+import csv
+import json
+import re
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import yaml
+from pydantic import ValidationError
+
+from mealie_pipeline.adapters import Adapters
+from mealie_pipeline.adapters.llm import LLMError, UsageLimited
+from mealie_pipeline.adapters.mealie import Catalog, Food, Tag, Unit
+from mealie_pipeline.adapters.video_source import VideoSourceError
+from mealie_pipeline.errors import MealieError
+from mealie_pipeline.images import attach_image, candidate_urls
+from mealie_pipeline.matching import FoodMatcher, UnitNormalizer
+from mealie_pipeline.models import ExtractedRecipe, ParsedIngredient, VideoMeta, extraction_schema
+from mealie_pipeline.payload import build_payload
+from mealie_pipeline.settings import Settings
+from mealie_pipeline.store import StateStore
+
+STAGES = ["metadata", "extract", "parse", "tag", "upload"]
+MAX_TAGS = 6
+TO_TASTE = "to taste"
+
+
+@dataclass
+class RunReport:
+    done: dict[str, int] = field(default_factory=dict)
+    failed: list[str] = field(default_factory=list)
+    uploaded: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    dry_run_files: list[Path] = field(default_factory=list)
+    stopped: str | None = None
+
+    def count(self, stage: str) -> None:
+        self.done[stage] = self.done.get(stage, 0) + 1
+
+
+class Pipeline:
+    def __init__(
+        self,
+        workspace: Path,
+        settings: Settings,
+        adapters: Adapters,
+        store: StateStore,
+        *,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ):
+        self.workspace = workspace
+        self.settings = settings
+        self.a = adapters
+        self.store = store
+        self.now = now
+        self._catalog: Catalog | None = None
+        self._detail: dict[str, str] = {}
+        units = workspace / "config" / "units.yaml"
+        synonyms = yaml.safe_load(units.read_text(encoding="utf-8")) if units.is_file() else {}
+        self.units = UnitNormalizer(synonyms or {})
+        self.foods = FoodMatcher()
+
+    # -- public ---------------------------------------------------------------------------
+
+    def add(self, canonical_url: str, url: str, platform: str, video_id: str) -> bool:
+        return self.store.add_video(f"{platform}:{video_id}", platform, video_id, url, canonical_url)
+
+    def run(
+        self, *, stages: list[str] | None = None, limit: int | None = None, dry_run: bool = False
+    ) -> RunReport:
+        report = RunReport()
+        wanted = stages or STAGES
+        handlers: dict[str, Callable[[str, RunReport, bool], None]] = {
+            "metadata": self._metadata,
+            "extract": self._extract,
+            "parse": self._parse,
+            "tag": self._tag,
+            "upload": self._upload,
+        }
+        for index, stage in enumerate(STAGES):
+            if stage not in wanted:
+                continue
+            kind = "video" if stage == "metadata" else "part"
+            # Parts exist only once their Video's metadata is done: `extract` has no part-level prerequisite.
+            previous = STAGES[index - 1] if index > 1 else None
+            # In a dry run nothing past `extract` is recorded, so the later stages preview instead.
+            if dry_run and stage in ("parse", "tag", "upload"):
+                if stage == "upload":
+                    self._preview(report, limit)
+                continue
+            for key in self.store.next_batch(kind, stage, previous, limit):
+                self.store.record(kind, key, stage, "running")
+                try:
+                    handlers[stage](key, report, dry_run)
+                except UsageLimited as err:
+                    self.store.record(kind, key, stage, "pending", str(err))
+                    report.stopped = f"Claude usage limit reached: {err}. Run again after it resets."
+                    return report
+                except (LLMError, MealieError, VideoSourceError, StageFailure, ValidationError) as err:
+                    self.store.record(kind, key, stage, "failed", str(err))
+                    report.failed.append(f"{key} [{stage}]: {err}")
+                else:
+                    self.store.record(kind, key, stage, "done", self._detail.pop(key, None))
+                    report.count(stage)
+        return report
+
+    # -- catalog --------------------------------------------------------------------------
+
+    @property
+    def catalog(self) -> Catalog:
+        if self._catalog is None:
+            self._catalog = self.a.mealie.catalog()
+        return self._catalog
+
+    # -- stages ---------------------------------------------------------------------------
+
+    def _metadata(self, video_key: str, report: RunReport, dry_run: bool) -> None:
+        video = self.store.video(video_key)
+        meta = self.a.videos.metadata(video.canonical_url)
+        self.store.set_metadata(video_key, meta.model_dump())
+        self.store.ensure_part(video_key, 1, 1)
+
+    def _extract(self, item_key: str, report: RunReport, dry_run: bool) -> None:
+        part = self.store.part(item_key)
+        video = self.store.video(part.video_key)
+        meta = VideoMeta.model_validate(video.metadata)
+        if not meta.description.strip():
+            raise StageFailure("the video has no description to extract a recipe from")
+        tags = sorted(t.name for t in self.catalog.tags)
+        prompt = (
+            f"Title: {meta.title}\nUploader: {meta.uploader}\nURL: {video.canonical_url}\n\n"
+            f"Allowed tag names: {json.dumps(tags, ensure_ascii=False)}\n\n"
+            f"[SRC:desc]\n{meta.description}\n[/SRC]\n"
+        )
+        raw = self.a.llm.complete("extract", prompt, extraction_schema(tags), "strong")
+        recipe = ExtractedRecipe.model_validate(raw)
+        if not recipe.is_recipe:
+            raise StageFailure("the description does not contain a recipe")
+        if not recipe.ingredients or not recipe.instructions:
+            raise StageFailure("the extraction has no ingredients or no steps")
+        self.store.update_part(item_key, extracted=recipe.model_dump())
+
+    def _parse(self, item_key: str, report: RunReport, dry_run: bool) -> None:
+        part = self.store.part(item_key)
+        recipe = ExtractedRecipe.model_validate(part.extracted)
+        parsed = self._parse_ingredients(recipe, part.video_key, create=True)
+        self.store.update_part(item_key, parsed=[p.model_dump() for p in parsed])
+
+    def _tag(self, item_key: str, report: RunReport, dry_run: bool) -> None:
+        part = self.store.part(item_key)
+        tags = self._choose_tags(ExtractedRecipe.model_validate(part.extracted))
+        self.store.update_part(item_key, tags=tags)
+
+    def _upload(self, item_key: str, report: RunReport, dry_run: bool) -> None:
+        part = self.store.part(item_key)
+        video = self.store.video(part.video_key)
+        recipe = ExtractedRecipe.model_validate(part.extracted)
+        parsed = [ParsedIngredient.model_validate(p) for p in part.parsed or []]
+        payload = self._payload(recipe, parsed, part.tags or [], item_key, part.video_key, video.platform)
+        mealie = self.a.mealie
+
+        existing = mealie.find_recipe(item_key=item_key)
+        if existing is not None and existing.get("recipeIngredient"):
+            slug = str(existing["slug"])  # already uploaded earlier: record it, write nothing
+            self.store.update_part(item_key, slug=slug, mealie_url=mealie.recipe_url(slug))
+            report.uploaded.append(f"{item_key}: {mealie.recipe_url(slug)} (already in Mealie)")
+            return
+        slug = (existing or {}).get("slug") or part.slug or mealie.create_recipe(recipe.name)
+        self.store.update_part(item_key, slug=slug)  # remembered before the PATCH so a crash can resume
+        mealie.patch_recipe(slug, payload)
+
+        meta = VideoMeta.model_validate(video.metadata)
+        urls = candidate_urls(video.platform, video.video_id, meta.thumbnail)
+        outcome = attach_image(mealie, slug, urls, self.a.images, self.workspace / "work" / "images")
+        warnings = ["image_missing"] if outcome == "missing" else []
+
+        stored = mealie.get_recipe(slug)
+        problems = read_back_problems(payload, stored)
+        if problems:
+            raise StageFailure("read-back differs from what was sent: " + "; ".join(problems))
+        link = mealie.recipe_url(slug)
+        self.store.update_part(item_key, mealie_url=link, warnings=warnings)
+        self._detail[item_key] = "image_missing" if warnings else ""
+        report.uploaded.append(f"{item_key}: {link}")
+        report.warnings += [f"{item_key}: {w}" for w in warnings]
+
+    # -- dry run --------------------------------------------------------------------------
+
+    def _preview(self, report: RunReport, limit: int | None) -> None:
+        """Parse, tag and build the payload for parts with a finished extraction; no writes anywhere."""
+        out = self.workspace / "work" / "payloads"
+        for item_key in self.store.next_batch("part", "upload", "extract", limit):
+            try:
+                part = self.store.part(item_key)
+                video = self.store.video(part.video_key)
+                recipe = ExtractedRecipe.model_validate(part.extracted)
+                parsed = self._parse_ingredients(recipe, part.video_key, create=False)
+                payload = self._payload(
+                    recipe, parsed, self._choose_tags(recipe), item_key, part.video_key, video.platform
+                )
+            except (StageFailure, ValidationError, MealieError) as err:
+                report.failed.append(f"{item_key} [dry-run]: {err}")
+                continue
+            out.mkdir(parents=True, exist_ok=True)
+            path = out / (re.sub(r"[^A-Za-z0-9_.-]+", "_", item_key) + ".json")
+            path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            report.dry_run_files.append(path)
+
+    # -- helpers --------------------------------------------------------------------------
+
+    def _payload(
+        self,
+        recipe: ExtractedRecipe,
+        parsed: list[ParsedIngredient],
+        tags: list[dict[str, Any]],
+        item_key: str,
+        video_key: str,
+        platform: str,
+    ) -> dict[str, Any]:
+        canonical = self.store.video(video_key).canonical_url
+        return build_payload(
+            recipe, parsed, tags, org_url=canonical, item_key=item_key, video_key=video_key, platform=platform
+        )
+
+    def _choose_tags(self, recipe: ExtractedRecipe) -> list[dict[str, Any]]:
+        by_name = {t.name.casefold(): t for t in self.catalog.tags}
+        chosen: list[Tag] = []
+        for choice in recipe.tag_choices:
+            tag = by_name.get(choice.tag.casefold())
+            if tag is not None and tag not in chosen:
+                chosen.append(tag)
+        if not chosen:
+            raise StageFailure("no existing Mealie tag was chosen for this recipe")
+        return [{"id": t.id, "name": t.name, "slug": t.slug} for t in chosen[:MAX_TAGS]]
+
+    def _parse_ingredients(
+        self, recipe: ExtractedRecipe, video_key: str, *, create: bool
+    ) -> list[ParsedIngredient]:
+        result = []
+        for ingredient in recipe.ingredients:
+            engine = self.a.engine.parse(ingredient.line)
+            unit_text = engine.unit if ingredient.quantity_stated else ""
+            unit_match = self.units.match(unit_text, self.catalog.units)
+            food_match = self.foods.match(engine.food or ingredient.line, self.catalog.foods)
+
+            unit: Unit | None = unit_match.unit
+            if unit_match.kind == "new" and create:
+                unit = self._create_unit(unit_match.new_name, video_key)
+            food: Food | None = food_match.food
+            if food_match.kind == "new" and create:
+                food = self._create_food(food_match.new_name, video_key)
+
+            if ingredient.quantity_stated:
+                quantity, note = engine.quantity or 0, engine.note
+            else:
+                quantity, note = 0, engine.note or TO_TASTE
+            result.append(
+                ParsedIngredient(
+                    original_text=ingredient.original_line or ingredient.line,
+                    section=ingredient.section,
+                    quantity=quantity,
+                    quantity_stated=ingredient.quantity_stated,
+                    unit_id=unit.id if unit else None,
+                    unit_name=unit.name if unit else (unit_match.new_name or None),
+                    food_id=food.id if food else None,
+                    food_name=food.name if food else food_match.new_name,
+                    note=note,
+                    food_match=food_match.kind,
+                    unit_match=unit_match.kind,
+                )
+            )
+        return result
+
+    def _create_food(self, name: str, video_key: str) -> Food:
+        food = self.a.mealie.create_food(name)
+        self.catalog.foods.append(food)
+        self._log_created("created_foods.csv", name, video_key)
+        return food
+
+    def _create_unit(self, name: str, video_key: str) -> Unit:
+        unit = self.a.mealie.create_unit(name)
+        self.catalog.units.append(unit)
+        self._log_created("created_units.csv", name, video_key)
+        return unit
+
+    def _log_created(self, filename: str, name: str, video_key: str) -> None:
+        """Appends to `reports/<filename>` with the Video the name first came from."""
+        path = self.workspace / "reports" / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        new_file = not path.exists()
+        with path.open("a", encoding="utf-8-sig" if new_file else "utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            if new_file:
+                writer.writerow(["name", "first_video_key", "created_at"])
+            writer.writerow([name, video_key, self.now().isoformat(timespec="seconds")])
+
+
+class StageFailure(Exception):
+    """An expected, explainable failure of one entity at one stage."""
+
+
+def read_back_problems(sent: dict[str, Any], stored: dict[str, Any]) -> list[str]:
+    """What differs between the PATCH body and the recipe read back from Mealie (empty = identical)."""
+    problems = []
+    sent_ingredients, got_ingredients = sent["recipeIngredient"], stored.get("recipeIngredient") or []
+    if len(sent_ingredients) != len(got_ingredients):
+        problems.append(f"ingredient count {len(got_ingredients)}, expected {len(sent_ingredients)}")
+    else:
+        for index, (want, got) in enumerate(zip(sent_ingredients, got_ingredients, strict=True), start=1):
+            want_id = (want.get("food") or {}).get("id")
+            got_id = (got.get("food") or {}).get("id")
+            if want_id != got_id:
+                problems.append(f"ingredient {index} food id {got_id}, expected {want_id}")
+    want_tags = {t["id"] for t in sent["tags"]}
+    got_tags = {t["id"] for t in stored.get("tags") or []}
+    if want_tags != got_tags:
+        problems.append(f"tags {sorted(got_tags)}, expected {sorted(want_tags)}")
+    if len(sent["recipeInstructions"]) != len(stored.get("recipeInstructions") or []):
+        problems.append("step count differs")
+    return problems
