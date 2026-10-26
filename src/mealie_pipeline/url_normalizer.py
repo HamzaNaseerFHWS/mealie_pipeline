@@ -5,6 +5,7 @@ provides `normalize_website` for ordinary recipe-page links. Facebook `fb.watch`
 short links need a redirect to resolve; the caller does that and then normalizes the result.
 """
 
+import hashlib
 import re
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlencode, urlparse
@@ -104,3 +105,22 @@ def normalize_website(url: str) -> str | None:
     path = re.sub(r"/{2,}", "/", parsed.path).rstrip("/")
     kept = sorted((k, v) for k, v in _query(parsed.query).items() if not _is_tracking(k))
     return host + path + (f"?{urlencode(kept)}" if kept else "")
+
+
+def normalize_web(url: str) -> NormalizedUrl | None:
+    """A recipe-page URL as a work item: platform `web`, a stable short hash as the id.
+
+    The hash comes from `normalize_website`, so the same page with or without `www.`, a trailing
+    slash or tracking parameters is one item. The canonical URL keeps the page's real host and
+    path (it becomes the Mealie recipe's `orgURL`) but loses tracking parameters and the fragment.
+    """
+    key = normalize_website(url)
+    if key is None:
+        return None
+    text = url.strip()
+    if "://" not in text:
+        text = "https://" + text
+    parsed = urlparse(text)
+    kept = [(k, v) for k, v in _query(parsed.query).items() if not _is_tracking(k)]
+    canonical = f"{parsed.scheme}://{parsed.netloc}{parsed.path}" + (f"?{urlencode(kept)}" if kept else "")
+    return NormalizedUrl("web", hashlib.sha1(key.encode("utf-8")).hexdigest()[:12], canonical)

@@ -4,12 +4,24 @@ import json
 from typing import Any
 
 
-def recipe_json(name: str, ingredients: int = 6, steps: int = 4, image: bool = True) -> dict[str, Any]:
+def recipe_json(
+    name: str,
+    ingredients: int = 6,
+    steps: int = 4,
+    image: bool = True,
+    *,
+    ingredient_lines: list[str] | None = None,
+    step_lines: list[str] | None = None,
+) -> dict[str, Any]:
     data: dict[str, Any] = {
         "@type": "Recipe",
         "name": name,
-        "recipeIngredient": [f"{n} unit of ingredient {n}" for n in range(1, ingredients + 1)],
-        "recipeInstructions": [{"@type": "HowToStep", "text": f"Do step {n}."} for n in range(1, steps + 1)],
+        "recipeIngredient": ingredient_lines
+        or [f"{n} unit of ingredient {n}" for n in range(1, ingredients + 1)],
+        "recipeInstructions": [
+            {"@type": "HowToStep", "text": text}
+            for text in (step_lines or [f"Do step {n}." for n in range(1, steps + 1)])
+        ],
         "recipeYield": "4 servings",
         "prepTime": "PT10M",
         "cookTime": "PT20M",

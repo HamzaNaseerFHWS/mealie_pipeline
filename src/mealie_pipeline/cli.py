@@ -127,7 +127,8 @@ def run(
     if unknown:
         typer.echo(f"unknown stage(s): {', '.join(unknown)}. Stages: {', '.join([*REQUEST_STAGES, *STAGES])}")
         raise typer.Exit(2)
-    find_requested = "find" in (chosen or [])
+    # A plain `mp run` also finds pages for pending Recipe Requests; with --stages, only if listed.
+    find_requested = chosen is None or "find" in chosen
     if chosen is not None:
         chosen = [s for s in chosen if s != "find"]
     if mode not in ("skip", "update"):
@@ -190,12 +191,26 @@ def run(
         typer.echo(f"FAILED {line}")
     if report.stopped:
         typer.echo(report.stopped)
+    _print_request_summary(pipeline, app_ctx.workspace)
     raise typer.Exit(1 if report.failed or report.stopped or find_failed else 0)
+
+
+def _print_request_summary(pipeline: Pipeline, workspace: Path) -> None:
+    requests = RecipeRequests(pipeline.store)
+    counts = requests.counts()
+    if not counts:
+        return
+    typer.echo(
+        "requests: " + ", ".join(f"{n} {name}" for name in REQUEST_STATUSES if (n := counts.get(name, 0)))
+    )
+    typer.echo(f"wrote {write_requests_report(requests, workspace)}")
 
 
 def _run_find(app_ctx: AppContext, pipeline: Pipeline, limit: int | None, should_stop) -> bool:
     """The `find` stage for Recipe Requests; returns True when it stopped early (outage, Ctrl+C)."""
     requests = RecipeRequests(pipeline.store)
+    if not requests.all():
+        return False  # no sheet imported: nothing to find
     policy_file = app_ctx.workspace / "config" / "recipe_sites.yaml"
     policy = SitePolicy.from_config(
         yaml.safe_load(policy_file.read_text(encoding="utf-8")) if policy_file.is_file() else {}

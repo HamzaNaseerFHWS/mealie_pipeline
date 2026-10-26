@@ -91,6 +91,8 @@ MIGRATIONS = [
     ALTER TABLE recipe_requests ADD COLUMN identity TEXT;
     UPDATE recipe_requests SET position = 'R' || row_number || 'C1', identity = 'name:' || name_key;
     """,
+    # Migration 5 (ticket 28): the Item Key of the Recipe Part a found request became.
+    "ALTER TABLE recipe_requests ADD COLUMN item_key TEXT;",
 ]
 
 PART_JSON_FIELDS = {"extracted", "parsed", "tags", "verify"}
