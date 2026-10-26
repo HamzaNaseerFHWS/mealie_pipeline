@@ -22,7 +22,7 @@
 
 **Blocked by:** 26, 06; wayfinder ticket `21-recipe-name-search-provider.md` (resolved: read its Answer for the providers, denylist, query templates and thresholds)
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `spec.md` modules 3 (`WebFetcher`, `LLMBackend`), 6 (Source Builder), 15 (Reporter) and 18 (Recipe Requests); ticket 06. If ticket 17 is already done, use its rendered fetch for `needs_browser` pages; otherwise those candidates simply count as invalid.
 
