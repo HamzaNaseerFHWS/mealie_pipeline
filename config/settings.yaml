@@ -10,9 +10,15 @@ mealie:
   # First backoff delay in seconds; doubles on every retry (1, 2, 4).
   backoff_seconds: 1.0
 
+run:
+  workers: 1          # items handled at the same time by find, scrape and extract (`mp run --workers N`)
+  stale_minutes: 30   # a `running` claim older than this (a run that died) is taken over
+
 llm:
   # Seconds to wait for one `claude -p` call.
   timeout_seconds: 600
+  # Simultaneous `claude -p` processes, whatever the workers (they share one Pro quota).
+  max_parallel: 2
   # Which `claude --model` alias each tier uses. Uncomment to override the defaults.
   # models:
   #   fast: haiku

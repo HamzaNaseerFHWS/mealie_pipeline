@@ -5,6 +5,7 @@ built-in `WebSearch` tool through `claude -p`. Both return only titles and addre
 fetches and reads the pages itself.
 """
 
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -51,6 +52,7 @@ class DdgsSearch:
         self.clock = clock
         self.sleep = sleep
         self._last: float | None = None
+        self._lock = threading.Lock()
 
     def _ddgs(self) -> Any:
         if self._client is None:
@@ -60,16 +62,19 @@ class DdgsSearch:
         return self._client
 
     def search(self, query: str, language: str | None = None, count: int = 10) -> list[SearchHit]:
-        if self._last is not None:
-            wait = self.min_delay - (self.clock() - self._last)
-            if wait > 0:
-                self.sleep(wait)
-        self._last = self.clock()
         region = self.regions.get(language or "en", "wt-wt")
-        try:
-            raw = self._ddgs().text(query, region=region, max_results=count)
-        except Exception as err:  # ddgs raises its own family (rate limit, timeout, ...) and parser errors
-            raise SearchError(f"ddgs: {type(err).__name__}: {err}") from err
+        with self._lock:  # one query at a time: the gap between queries is global, not per worker
+            if self._last is not None:
+                wait = self.min_delay - (self.clock() - self._last)
+                if wait > 0:
+                    self.sleep(wait)
+            self._last = self.clock()
+            try:
+                raw = self._ddgs().text(query, region=region, max_results=count)
+            except (
+                Exception
+            ) as err:  # ddgs raises its own family (rate limit, timeout, ...) and parser errors
+                raise SearchError(f"ddgs: {type(err).__name__}: {err}") from err
         return [
             SearchHit(
                 url=str(item["href"]), title=str(item.get("title") or ""), snippet=str(item.get("body") or "")
@@ -92,10 +97,15 @@ class ClaudeWebSearch:
     """`claude -p --tools "WebSearch"` with a JSON schema `{urls: [{url, title}]}`."""
 
     def __init__(
-        self, prompts_dir: Path, *, timeout_seconds: float = 300, models: dict[str, str] | None = None
+        self,
+        prompts_dir: Path,
+        *,
+        timeout_seconds: float = 300,
+        models: dict[str, str] | None = None,
+        slots: threading.Semaphore | None = None,
     ):
         self._backend = ClaudeCliBackend(
-            prompts_dir, models=models, timeout_seconds=timeout_seconds, tools="WebSearch"
+            prompts_dir, models=models, timeout_seconds=timeout_seconds, tools="WebSearch", slots=slots
         )
 
     def search(self, query: str, language: str | None = None, count: int = 10) -> list[SearchHit]:

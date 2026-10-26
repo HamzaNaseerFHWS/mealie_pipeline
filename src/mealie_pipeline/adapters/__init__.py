@@ -3,6 +3,7 @@
 Tests construct `Adapters(...)` with fakes; the CLI builds the real ones from settings.
 """
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,6 +34,7 @@ class Adapters:
 
 def build_adapters(settings: Settings, workspace: Path) -> Adapters:
     token = settings.mealie_token.get_secret_value() if settings.mealie_token else ""
+    claude_slots = threading.BoundedSemaphore(settings.llm.max_parallel)  # shared by every claude call
     return Adapters(
         mealie=MealieHttpGateway(
             settings.mealie_url or "",
@@ -46,6 +48,7 @@ def build_adapters(settings: Settings, workspace: Path) -> Adapters:
             workspace / "prompts",
             models=settings.llm.models,
             timeout_seconds=settings.llm.timeout_seconds,
+            slots=claude_slots,
         ),
         videos=YtDlpVideoSource(),
         images=HttpImageDownloader(settings.images.timeout_seconds),
@@ -61,6 +64,9 @@ def build_adapters(settings: Settings, workspace: Path) -> Adapters:
             regions=settings.find.regions, min_delay_seconds=settings.find.search_delay_seconds
         ),
         search_fallback=ClaudeWebSearch(
-            workspace / "prompts", timeout_seconds=settings.llm.timeout_seconds, models=settings.llm.models
+            workspace / "prompts",
+            timeout_seconds=settings.llm.timeout_seconds,
+            models=settings.llm.models,
+            slots=claude_slots,
         ),
     )

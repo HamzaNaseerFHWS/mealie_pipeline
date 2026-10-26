@@ -21,8 +21,14 @@ class MealieSettings(BaseModel):
     backoff_seconds: float = 1.0
 
 
+class RunSettings(BaseModel):
+    workers: int = Field(default=1, ge=1)  # items handled at the same time by find, scrape and extract
+    stale_minutes: int = Field(default=30, ge=1)  # a `running` claim older than this is taken over
+
+
 class LlmSettings(BaseModel):
     timeout_seconds: float = 600
+    max_parallel: int = Field(default=2, ge=1)  # simultaneous `claude -p` processes (one Pro quota)
     # Overrides of the tier -> `claude --model` alias map: {"fast": "haiku", "strong": "sonnet", ...}.
     models: dict[str, str] = Field(default_factory=dict)
 
@@ -100,6 +106,7 @@ class VerifySettings(BaseModel):
 class Settings(BaseModel):
     mealie: MealieSettings = Field(default_factory=MealieSettings)
     verify: VerifySettings = Field(default_factory=VerifySettings)
+    run: RunSettings = Field(default_factory=RunSettings)
     llm: LlmSettings = Field(default_factory=LlmSettings)
     images: ImageSettings = Field(default_factory=ImageSettings)
     web: WebSettings = Field(default_factory=WebSettings)
@@ -116,7 +123,7 @@ class Settings(BaseModel):
 
 
 SECRET_FIELDS = {"mealie_url", "mealie_token", "openai_api_key", "openai_max_usd"}
-NESTED_SECTIONS = {"mealie", "llm", "images", "verify", "web", "find"}
+NESTED_SECTIONS = {"mealie", "run", "llm", "images", "verify", "web", "find"}
 
 
 def _apply_overrides(data: dict[str, Any], overrides: Mapping[str, str | None]) -> None:

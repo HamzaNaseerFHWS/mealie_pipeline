@@ -119,9 +119,17 @@ def run(
     mode: Annotated[
         str, typer.Option(help="skip: leave recipes already in Mealie alone. update: PATCH them in place.")
     ] = "skip",
+    workers: Annotated[
+        int | None,
+        typer.Option(
+            min=1,
+            help="Items handled at the same time by find, scrape and extract (default: run.workers).",
+        ),
+    ] = None,
 ) -> None:
     """Take every registered Video through metadata, extract, parse, tag and upload."""
     app_ctx: AppContext = ctx.obj
+    worker_count = workers or app_ctx.settings.run.workers
     chosen = [s.strip() for s in stages.split(",")] if stages else None
     unknown = [s for s in chosen or [] if s not in STAGES and s not in REQUEST_STAGES]
     if unknown:
@@ -148,7 +156,7 @@ def run(
     find_failed = False
     try:
         if find_requested:
-            find_failed = _run_find(app_ctx, pipeline, limit, lambda: interrupted)
+            find_failed = _run_find(app_ctx, pipeline, limit, lambda: interrupted, worker_count)
         if chosen is None or chosen:
             report = pipeline.run(
                 stages=chosen,
@@ -157,6 +165,7 @@ def run(
                 mode=mode,
                 upgrade_existing=upgrade_existing,
                 should_stop=lambda: interrupted,
+                workers=worker_count,
             )
         else:  # only `find` was asked for
             report = RunReport()
@@ -206,7 +215,9 @@ def _print_request_summary(pipeline: Pipeline, workspace: Path) -> None:
     typer.echo(f"wrote {write_requests_report(requests, workspace)}")
 
 
-def _run_find(app_ctx: AppContext, pipeline: Pipeline, limit: int | None, should_stop) -> bool:
+def _run_find(
+    app_ctx: AppContext, pipeline: Pipeline, limit: int | None, should_stop, workers: int = 1
+) -> bool:
     """The `find` stage for Recipe Requests; returns True when it stopped early (outage, Ctrl+C)."""
     requests = RecipeRequests(pipeline.store)
     if not requests.all():
@@ -225,7 +236,7 @@ def _run_find(app_ctx: AppContext, pipeline: Pipeline, limit: int | None, should
         pipeline.selectors,
         policy,
     )
-    result = finder.run(limit=limit, should_stop=should_stop)
+    result = finder.run(limit=limit, should_stop=should_stop, workers=workers)
     for line in result.choices_applied:
         typer.echo(f"choice applied {line}")
     for line in result.found:

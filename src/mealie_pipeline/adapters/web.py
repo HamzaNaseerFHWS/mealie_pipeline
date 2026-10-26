@@ -8,6 +8,7 @@ marked `needs_browser` for the Playwright fallback of ticket 17; it is not an er
 
 import hashlib
 import json
+import threading
 import time
 import urllib.robotparser
 from collections.abc import Callable
@@ -93,17 +94,20 @@ class HttpxWebFetcher:
         self.clock = clock
         self.sleep = sleep
         self._last_request: dict[str, float] = {}
+        self._turn_lock = threading.Lock()
         self._robots: dict[str, urllib.robotparser.RobotFileParser | None] = {}
 
     # -- politeness -----------------------------------------------------------------------
 
     def _wait_turn(self, host: str) -> None:
-        last = self._last_request.get(host)
-        if last is not None:
-            remaining = self.min_delay - (self.clock() - last)
-            if remaining > 0:
-                self.sleep(remaining)
-        self._last_request[host] = self.clock()
+        """Reserves the next slot for this host, so workers together keep the gap too."""
+        with self._turn_lock:
+            now = self.clock()
+            last = self._last_request.get(host)
+            start = now if last is None else max(now, last + self.min_delay)
+            self._last_request[host] = start
+        if start > now:
+            self.sleep(start - now)
 
     def _allowed(self, url: str) -> bool:
         parsed = urlparse(url)

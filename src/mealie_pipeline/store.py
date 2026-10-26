@@ -6,8 +6,9 @@ Public queries are what tests assert on.
 
 import json
 import sqlite3
+import threading
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -148,19 +149,37 @@ BUSY_TIMEOUT_SECONDS = 60
 class StateStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
-        # WAL + a long lock wait: `mp run --stages find` and an import run may share the file.
-        self._db = sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS)
-        self._db.execute("PRAGMA journal_mode=WAL")
-        self._db.row_factory = sqlite3.Row
+        self._path = path
+        self._local = threading.local()
+        self._connections: list[sqlite3.Connection] = []
+        self._connections_lock = threading.Lock()
         self._migrate()
 
     @property
+    def _db(self) -> sqlite3.Connection:
+        """This thread's connection: workers never share one, so they never trip over each other."""
+        connection = getattr(self._local, "connection", None)
+        if connection is None:
+            # WAL + a long lock wait: workers, `mp run --stages find` and an import run share the file.
+            connection = sqlite3.connect(self._path, timeout=BUSY_TIMEOUT_SECONDS, check_same_thread=False)
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.row_factory = sqlite3.Row
+            self._local.connection = connection
+            with self._connections_lock:
+                self._connections.append(connection)
+        return connection
+
+    @property
     def db(self) -> sqlite3.Connection:
-        """The connection, for modules that own their own tables (Recipe Requests)."""
+        """The connection of the calling thread, for modules that own their own tables."""
         return self._db
 
     def close(self) -> None:
-        self._db.close()
+        with self._connections_lock:
+            connections, self._connections = self._connections, []
+        for connection in connections:
+            connection.close()
+        self._local = threading.local()
 
     def _migrate(self) -> None:
         version = self._db.execute("PRAGMA user_version").fetchone()[0]
@@ -270,6 +289,24 @@ class StateStore:
             (kind, key, stage, status, 1 if status == "running" else 0, detail, _now()),
         )
         self._db.commit()
+
+    def claim(self, kind: EntityKind, key: str, stage: str, stale_minutes: int = 30) -> bool:
+        """Takes the entity for this stage: True for exactly one caller.
+
+        Succeeds when the stage has no record or is `pending`, or when another run's claim (`running`)
+        is older than `stale_minutes` (that run died). Used by workers; the claim is a `running` record."""
+        stale_before = (datetime.now(UTC) - timedelta(minutes=stale_minutes)).isoformat(timespec="seconds")
+        cursor = self._db.execute(
+            "INSERT INTO stage_records (entity_kind, entity_key, stage, status, attempts, last_error,"
+            " updated_at) VALUES (?, ?, ?, 'running', 1, NULL, ?)"
+            " ON CONFLICT (entity_kind, entity_key, stage) DO UPDATE SET status = 'running',"
+            " attempts = attempts + 1, last_error = NULL, updated_at = excluded.updated_at"
+            " WHERE stage_records.status = 'pending'"
+            " OR (stage_records.status = 'running' AND stage_records.updated_at < ?)",
+            (kind, key, stage, _now(), stale_before),
+        )
+        self._db.commit()
+        return cursor.rowcount == 1
 
     def stage_status(self, kind: EntityKind, key: str, stage: str) -> Status | None:
         row = self._db.execute(

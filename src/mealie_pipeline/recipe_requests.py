@@ -7,6 +7,7 @@ only registers, lists, resets and reports them.
 import csv
 import json
 import re
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -68,7 +69,12 @@ class RecipeRequests:
     """The Recipe Request queries of the State Store."""
 
     def __init__(self, store: StateStore):
-        self.db = store.db
+        self._store = store
+
+    @property
+    def db(self) -> sqlite3.Connection:
+        """The calling thread's connection (workers each have their own)."""
+        return self._store.db
 
     def add_rows(self, rows: list[SheetRow], source_file: str) -> tuple[int, int]:
         """Registers rows and returns `(new, already_known)`.

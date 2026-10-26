@@ -7,7 +7,9 @@ always wins over the scorer and is applied at the start of the next run.
 
 import csv
 import re
+import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -31,6 +33,13 @@ class SearchOutage(Exception):
     """Every search source failed: the requests stay pending instead of being marked not_found."""
 
 
+def _outage_message(err: Exception) -> str:
+    return (
+        f"Every search source failed ({err}). The remaining requests stay pending: "
+        "check your connection and run again later."
+    )
+
+
 @dataclass
 class FindReport:
     found: list[str] = field(default_factory=list)
@@ -41,6 +50,14 @@ class FindReport:
     searched: int = 0
     fallback_used: int = 0
     stopped: str | None = None
+
+    def absorb(self, other: "FindReport") -> None:
+        self.found += other.found
+        self.not_found += other.not_found
+        self.needs_choice += other.needs_choice
+        self.warnings += other.warnings
+        self.searched += other.searched
+        self.fallback_used += other.fallback_used
 
 
 class RequestFinder:
@@ -66,24 +83,80 @@ class RequestFinder:
 
     # -- run ------------------------------------------------------------------------------
 
-    def run(self, *, limit: int | None = None, should_stop: Callable[[], bool] = lambda: False) -> FindReport:
+    def run(
+        self,
+        *,
+        limit: int | None = None,
+        should_stop: Callable[[], bool] = lambda: False,
+        workers: int = 1,
+    ) -> FindReport:
         report = FindReport()
         self._apply_choices(report)
         todo = self.requests.with_status("pending")
-        for request in todo[:limit] if limit is not None else todo:
-            if should_stop():
-                report.stopped = "Interrupted after the current request. Run again to continue."
-                break
-            try:
-                self._find_one(request, report)
-            except SearchOutage as err:
-                report.stopped = (
-                    f"Every search source failed ({err}). The remaining requests stay pending: "
-                    "check your connection and run again later."
-                )
-                break
+        todo = todo[:limit] if limit is not None else todo
+        if workers > 1 and len(todo) > 1:
+            self._run_parallel(todo, report, should_stop, workers)
+        else:
+            for request in todo:
+                if should_stop():
+                    report.stopped = "Interrupted after the current request. Run again to continue."
+                    break
+                try:
+                    self._find_one(request, report)
+                except SearchOutage as err:
+                    report.stopped = _outage_message(err)
+                    break
         self._write_choices()
         return report
+
+    def _run_parallel(
+        self,
+        todo: list[RecipeRequest],
+        report: FindReport,
+        should_stop: Callable[[], bool],
+        workers: int,
+    ) -> None:
+        """Several requests at once. The search sources and each domain still keep their delays (they
+        are shared), and the results are merged in request order, whatever order the workers finish."""
+        halt = threading.Event()
+        interrupted = threading.Event()
+        results: dict[int, FindReport] = {}
+        outages: list[SearchOutage] = []
+        lock = threading.Lock()
+
+        def work(request: RecipeRequest) -> None:
+            if halt.is_set():
+                return
+            if should_stop():
+                interrupted.set()
+                return
+            sub = FindReport()
+            try:
+                self._find_one(request, sub)
+            except SearchOutage as err:
+                with lock:
+                    outages.append(err)
+                halt.set()
+                return
+            with lock:
+                results[request.id] = sub
+
+        pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="mp-find")
+        try:
+            for future in [pool.submit(work, request) for request in todo]:
+                future.result()
+        except BaseException:  # Ctrl+C or a crash: start nothing else, let the running requests finish
+            halt.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
+        pool.shutdown()
+        for request in todo:
+            if request.id in results:
+                report.absorb(results[request.id])
+        if outages:
+            report.stopped = _outage_message(outages[0])
+        elif interrupted.is_set():
+            report.stopped = "Interrupted after the current request. Run again to continue."
 
     # -- one request ----------------------------------------------------------------------
 

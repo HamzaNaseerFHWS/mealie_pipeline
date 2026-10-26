@@ -4,9 +4,11 @@ The pipeline never calls an API for Claude: it runs the Claude Code CLI on the u
 `--bare` is never passed, because it ignores the subscription login.
 """
 
+import contextlib
 import json
 import shutil
 import subprocess
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -46,12 +48,14 @@ class ClaudeCliBackend:
         timeout_seconds: float = 600,
         executable: str | None = None,
         tools: str = "",
+        slots: threading.Semaphore | None = None,
     ):
         self.prompts_dir = prompts_dir
         self.models = {**DEFAULT_MODELS, **(models or {})}
         self.timeout_seconds = timeout_seconds
         self.executable = executable
         self.tools = tools  # `--tools` value: "" for pure text in/out, "WebSearch" for the search fallback
+        self.slots = slots  # caps simultaneous `claude` processes when workers run in parallel
 
     def build_args(self, exe: str, task: str, schema: dict[str, Any], tier: Tier) -> list[str]:
         return [
@@ -80,13 +84,14 @@ class ClaudeCliBackend:
         if not exe:
             raise LLMError("the `claude` CLI was not found on PATH: run `mp doctor`")
         try:
-            done = subprocess.run(
-                self.build_args(exe, task, schema, tier),
-                input=prompt.encode("utf-8"),  # bytes: text mode rewrites line endings on Windows
-                capture_output=True,
-                timeout=self.timeout_seconds,
-                check=False,
-            )
+            with self.slots or contextlib.nullcontext():
+                done = subprocess.run(
+                    self.build_args(exe, task, schema, tier),
+                    input=prompt.encode("utf-8"),  # bytes: text mode rewrites line endings on Windows
+                    capture_output=True,
+                    timeout=self.timeout_seconds,
+                    check=False,
+                )
         except subprocess.TimeoutExpired as err:
             raise LLMError(f"claude timed out after {self.timeout_seconds:.0f}s") from err
         except OSError as err:

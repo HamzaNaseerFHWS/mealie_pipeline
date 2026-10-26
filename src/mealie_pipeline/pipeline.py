@@ -7,7 +7,9 @@ recorded on its Stage Record and never stops the stage. Re-running changes nothi
 import csv
 import json
 import re
+import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,7 +38,7 @@ from mealie_pipeline.review import write_review_file
 from mealie_pipeline.scoring import apply_judge, decide
 from mealie_pipeline.scrape import WebResult, find_web_recipe
 from mealie_pipeline.settings import Settings
-from mealie_pipeline.store import StateStore, Status
+from mealie_pipeline.store import EntityKind, StateStore, Status
 from mealie_pipeline.url_normalizer import normalize_website
 from mealie_pipeline.verify import Evaluation, evaluate
 
@@ -57,6 +59,9 @@ PREREQUISITE: dict[str, str | None] = {
     "upload": "verify",
 }
 MAX_TAGS = 6
+# Stages that only read the web or call `claude` for one item at a time: they can use several workers.
+# parse, tag, verify and upload write to Mealie and its Catalog, so they always run one at a time.
+PARALLEL_STAGES = {"scrape", "extract"}
 WEB_STRUCTURED_RULE = (
     "The [SRC:web] block is the creator's own written recipe. Keep the website's quantities and wording "
     "and only fill gaps (missing times or servings) and merge in useful tips from the video description; "
@@ -80,9 +85,17 @@ class RunReport:
     upgraded_existing: list[str] = field(default_factory=list)
     dry_run_files: list[Path] = field(default_factory=list)
     stopped: str | None = None
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def count(self, stage: str) -> None:
-        self.done[stage] = self.done.get(stage, 0) + 1
+        with self._lock:
+            self.done[stage] = self.done.get(stage, 0) + 1
+
+    def sort_lines(self) -> None:
+        """Workers finish in any order; the report lists items in key order, as a single worker would."""
+        lists = (self.failed, self.review, self.already_in_mealie, self.upgraded_existing, self.warnings)
+        for lines in lists:
+            lines.sort()
 
 
 class Pipeline:
@@ -128,6 +141,7 @@ class Pipeline:
         mode: str = "skip",
         upgrade_existing: bool = False,
         should_stop: Callable[[], bool] = lambda: False,
+        workers: int = 1,
     ) -> RunReport:
         """Runs the stages over every Video and every found Recipe Request that is ready (see `_run`).
 
@@ -143,6 +157,7 @@ class Pipeline:
                 mode=mode,
                 upgrade_existing=upgrade_existing,
                 should_stop=should_stop,
+                workers=workers,
             )
         finally:
             sync_outcomes(self.store, requests)
@@ -156,6 +171,7 @@ class Pipeline:
         mode: str = "skip",
         upgrade_existing: bool = False,
         should_stop: Callable[[], bool] = lambda: False,
+        workers: int = 1,
     ) -> RunReport:
         """Runs the stages in order over every entity that is ready.
 
@@ -202,38 +218,110 @@ class Pipeline:
                     for key in batch
                     if self.store.stage_status("video", self.store.part(key).video_key, "scrape") == "done"
                 ]
-            for key in batch[:limit] if limit is not None else batch:
+            todo = batch[:limit] if limit is not None else batch
+            if workers > 1 and stage in PARALLEL_STAGES and len(todo) > 1:
+                stop = self._run_parallel(
+                    kind, stage, todo, handlers[stage], report, dry_run, workers, should_stop
+                )
+                if stop:
+                    report.sort_lines()
+                    return report
+                continue
+            for key in todo:
                 if should_stop():
                     report.stopped = (
                         "Interrupted: finished the current item and stopped. Run again to continue."
                     )
                     return report
                 self.store.record(kind, key, stage, "running")
-                try:
-                    handlers[stage](key, report, dry_run)
-                except UsageLimited as err:
-                    self.store.record(kind, key, stage, "pending", str(err))
-                    report.stopped = f"Claude usage limit reached: {err}. Run again after it resets."
+                if not self._process(kind, key, stage, handlers[stage], report, dry_run):
                     return report
-                except AlreadyInMealie as err:
-                    link = self.a.mealie.recipe_url(err.slug)
-                    self.store.update_part(key, mealie_url=link)
-                    self.store.record(kind, key, stage, err.status, link)
-                    if isinstance(err, UpgradedExisting):
-                        self.store.update_part(key, slug=err.slug)
-                        report.upgraded_existing.append(f"{key}: {link}")
-                    else:
-                        report.already_in_mealie.append(f"{key}: {link}")
-                except NeedsReview as err:
-                    self.store.record(kind, key, stage, "review", str(err))
-                    report.review.append(f"{key}: {err}")
-                except Exception as err:  # one entity's failure never stops the others
-                    self.store.record(kind, key, stage, "failed", describe_error(err))
-                    report.failed.append(f"{key} [{stage}]: {describe_error(err)}")
-                else:
-                    self.store.record(kind, key, stage, "done", self._detail.pop(key, None))
-                    report.count(stage)
+        if workers > 1:
+            report.sort_lines()
         return report
+
+    def _process(
+        self,
+        kind: EntityKind,
+        key: str,
+        stage: str,
+        handler: Callable[[str, RunReport, bool], None],
+        report: RunReport,
+        dry_run: bool,
+    ) -> bool:
+        """Runs one entity through one stage and records the outcome; False when the run must stop
+        (Claude usage limit). A failure here never stops the other entities."""
+        try:
+            handler(key, report, dry_run)
+        except UsageLimited as err:
+            self.store.record(kind, key, stage, "pending", str(err))
+            report.stopped = f"Claude usage limit reached: {err}. Run again after it resets."
+            return False
+        except AlreadyInMealie as err:
+            link = self.a.mealie.recipe_url(err.slug)
+            self.store.update_part(key, mealie_url=link)
+            self.store.record(kind, key, stage, err.status, link)
+            if isinstance(err, UpgradedExisting):
+                self.store.update_part(key, slug=err.slug)
+                report.upgraded_existing.append(f"{key}: {link}")
+            else:
+                report.already_in_mealie.append(f"{key}: {link}")
+        except NeedsReview as err:
+            self.store.record(kind, key, stage, "review", str(err))
+            report.review.append(f"{key}: {err}")
+        except Exception as err:  # one entity's failure never stops the others
+            self.store.record(kind, key, stage, "failed", describe_error(err))
+            report.failed.append(f"{key} [{stage}]: {describe_error(err)}")
+        except BaseException:  # Ctrl+C or a crash: give the claim back instead of leaving it running
+            self.store.record(kind, key, stage, "pending")
+            raise
+        else:
+            self.store.record(kind, key, stage, "done", self._detail.pop(key, None))
+            report.count(stage)
+        return True
+
+    def _run_parallel(
+        self,
+        kind: EntityKind,
+        stage: str,
+        keys: list[str],
+        handler: Callable[[str, RunReport, bool], None],
+        report: RunReport,
+        dry_run: bool,
+        workers: int,
+        should_stop: Callable[[], bool],
+    ) -> bool:
+        """One stage over several entities at once; True when the run must stop afterwards.
+
+        Each item is claimed atomically, so none is taken twice (also by another `mp run`). A usage
+        limit or Ctrl+C stops new items from starting; the ones already running finish."""
+        halt = threading.Event()
+        interrupted = threading.Event()
+        stale = self.settings.run.stale_minutes
+
+        def work(key: str) -> None:
+            if halt.is_set():
+                return
+            if should_stop():
+                interrupted.set()
+                return
+            if not self.store.claim(kind, key, stage, stale):
+                return  # another run has it
+            if not self._process(kind, key, stage, handler, report, dry_run):
+                halt.set()
+
+        pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f"mp-{stage}")
+        try:
+            for future in [pool.submit(work, key) for key in keys]:
+                future.result()
+        except BaseException:  # Ctrl+C or a crash: start nothing else, let the running items finish
+            halt.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
+        pool.shutdown()
+        if interrupted.is_set() and report.stopped is None:
+            report.stopped = "Interrupted: finished the current item and stopped. Run again to continue."
+        return report.stopped is not None
 
     # -- catalog --------------------------------------------------------------------------
 
