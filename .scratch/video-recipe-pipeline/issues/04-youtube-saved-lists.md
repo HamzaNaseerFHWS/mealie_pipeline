@@ -8,7 +8,7 @@
 
 **Read first:** `spec.md` modules 3 (`VideoSource.list_playlist`, `ListCollector`) and 4 (URL Normalizer); `PIPELINE_SPEC.md` §3.1.
 
-- [ ] The URL Normalizer is pure and table-tested for:
+- [ ] The URL Normalizer is pure and table-tested for the cases below. Ticket 22 may already have built it (it comes first in the build order); if so, reuse it and add only the missing cases:
   - YouTube: watch, `youtu.be`, `/shorts/`, `m.` and `music.` hosts, the `si` parameter, playlist-context URLs
   - Instagram: `/p/`, `/reel/`, `/reels/`, `/tv/`, `igsh`
   - Facebook: `/reel/<id>`, `/watch/?v=`, `/<page>/videos/<id>`, `fbclid`, `mibextid`

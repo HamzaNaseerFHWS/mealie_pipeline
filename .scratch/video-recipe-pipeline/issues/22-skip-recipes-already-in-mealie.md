@@ -14,7 +14,9 @@
 
 No name-based or fuzzy matching: the link is the identity. Recipes without an `orgURL` aren't matched, and that's accepted.
 
-**Blocked by:** 03, 04 (URL Normalizer)
+**Blocked by:** 03
+
+**URL Normalizer:** this ticket comes before ticket 04 in the build order (Phase A). If the URL Normalizer (spec module 4) doesn't exist yet, build it here as specified in spec module 4 and ticket 04's first acceptance criterion, with those table tests. Ticket 04 then reuses it instead of building its own.
 
 **Status:** ready-for-agent
 

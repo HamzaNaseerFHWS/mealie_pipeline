@@ -3,7 +3,7 @@
 A personal pipeline that turns the user's **saved video lists** (YouTube playlists, Instagram saved "All posts", Facebook saved items) into clean recipes in a self-hosted **Mealie** instance. For each video it collects the URL, classifies it (recipe or not), scrapes the linked website, transcribes when needed, extracts the recipe with evidence, parses ingredients into Mealie foods and units, tags it, verifies it, and uploads it. Videos with several recipes produce several independent Mealie recipes.
 
 - **Spec (source of truth for the build):** `.scratch/video-recipe-pipeline/spec.md`
-- **Implementation tickets:** `.scratch/video-recipe-pipeline/issues/NN-*.md`, worked in number order on the frontier (see below)
+- **Implementation tickets:** `.scratch/video-recipe-pipeline/issues/NN-*.md`, worked in the order given by `.scratch/video-recipe-pipeline/ORDER.md` (not by number)
 - **Planning map (open decisions, HITL tasks):** `.scratch/wayfinder-video-recipes/map.md`
 - **Design reference (research, API details, rationale):** `PIPELINE_SPEC.md`. When a ticket and this document disagree, the ticket and spec win.
 - **Domain language:** `GLOSSARY.md`. **Decisions:** `docs/adr/`.
@@ -18,7 +18,7 @@ A personal pipeline that turns the user's **saved video lists** (YouTube playlis
 
 ## Working on a ticket
 
-1. Pick the ticket: the lowest-numbered file in `.scratch/video-recipe-pipeline/issues/` whose `Status:` is `ready-for-agent` and whose blockers are all finished. A blocker is finished when its implementation ticket is `done`, or its wayfinder ticket (`.scratch/wayfinder-video-recipes/issues/`) is `resolved`. Set the ticket's `Status:` to `in-progress` and commit that change first, so parallel sessions skip it. If a wayfinder blocker isn't resolved, stop and say so; don't guess its answer.
+1. Pick the ticket: the **first ticket listed in `.scratch/video-recipe-pipeline/ORDER.md`** whose `Status:` is `ready-for-agent` and whose blockers are all finished (if the user names a ticket, take that one). A blocker is finished when its implementation ticket is `done`, or its wayfinder ticket (`.scratch/wayfinder-video-recipes/issues/`) is `resolved`. Set the ticket's `Status:` to `in-progress` and commit that change first, so parallel sessions skip it. If a wayfinder blocker isn't resolved, stop and say so; don't guess its answer.
 2. Run `/implement` with the ticket path. Follow `/tdd` at the seams listed in the spec's *Testing Decisions*. Don't invent new seams.
 3. Before finishing: `uv run ruff check .`, `uv run ruff format --check .`, `uv run pyright` (or mypy if the ticket set that up), `uv run pytest`. All must pass.
 4. Append a `## Comments` section to the ticket with what was built, anything deferred, and the manual verification steps for the user. Set `Status: done`. Commit.
