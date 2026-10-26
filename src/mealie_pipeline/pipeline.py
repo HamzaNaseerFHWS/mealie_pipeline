@@ -22,6 +22,7 @@ from mealie_pipeline.adapters.llm import LLMError, Tier, UsageLimited
 from mealie_pipeline.adapters.mealie import Catalog, Food, Tag, Unit
 from mealie_pipeline.adapters.video_source import VideoSourceError
 from mealie_pipeline.errors import MealieError
+from mealie_pipeline.existing_links import build_link_set
 from mealie_pipeline.images import attach_image, candidate_urls
 from mealie_pipeline.matching import FoodMatcher, UnitNormalizer
 from mealie_pipeline.models import ExtractedRecipe, Judge, ParsedIngredient, VideoMeta, extraction_schema
@@ -29,10 +30,10 @@ from mealie_pipeline.payload import build_payload
 from mealie_pipeline.review import write_review_file
 from mealie_pipeline.scoring import apply_judge, decide
 from mealie_pipeline.settings import Settings
-from mealie_pipeline.store import StateStore
+from mealie_pipeline.store import StateStore, Status
 from mealie_pipeline.verify import Evaluation, evaluate
 
-STAGES = ["metadata", "extract", "parse", "tag", "verify", "upload"]
+STAGES = ["metadata", "linkcheck", "extract", "parse", "tag", "verify", "upload"]
 MAX_TAGS = 6
 TO_TASTE = "to taste"
 
@@ -44,6 +45,8 @@ class RunReport:
     uploaded: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     review: list[str] = field(default_factory=list)
+    already_in_mealie: list[str] = field(default_factory=list)
+    upgraded_existing: list[str] = field(default_factory=list)
     dry_run_files: list[Path] = field(default_factory=list)
     stopped: str | None = None
 
@@ -69,6 +72,8 @@ class Pipeline:
         self._catalog: Catalog | None = None
         self._detail: dict[str, str] = {}
         self.mode = "skip"
+        self.upgrade_existing = False
+        self._links: dict[str, str] | None = None
         units = workspace / "config" / "units.yaml"
         synonyms = yaml.safe_load(units.read_text(encoding="utf-8")) if units.is_file() else {}
         self.units = UnitNormalizer(synonyms or {})
@@ -86,6 +91,7 @@ class Pipeline:
         limit: int | None = None,
         dry_run: bool = False,
         mode: str = "skip",
+        upgrade_existing: bool = False,
         should_stop: Callable[[], bool] = lambda: False,
     ) -> RunReport:
         """Runs the stages in order over every entity that is ready.
@@ -95,9 +101,11 @@ class Pipeline:
         """
         report = RunReport()
         self.mode = mode
+        self.upgrade_existing = upgrade_existing
         wanted = stages or STAGES
         handlers: dict[str, Callable[[str, RunReport, bool], None]] = {
             "metadata": self._metadata,
+            "linkcheck": self._linkcheck,
             "extract": self._extract,
             "parse": self._parse,
             "tag": self._tag,
@@ -115,6 +123,8 @@ class Pipeline:
                 if stage == "upload":
                     self._preview(report, limit)
                 continue
+            if stage in ("linkcheck", "upload"):
+                self._links = None  # one fresh listing of Mealie per batch
             for key in self.store.next_batch(kind, stage, previous, limit):
                 if should_stop():
                     report.stopped = (
@@ -128,6 +138,15 @@ class Pipeline:
                     self.store.record(kind, key, stage, "pending", str(err))
                     report.stopped = f"Claude usage limit reached: {err}. Run again after it resets."
                     return report
+                except AlreadyInMealie as err:
+                    link = self.a.mealie.recipe_url(err.slug)
+                    self.store.update_part(key, mealie_url=link)
+                    self.store.record(kind, key, stage, err.status, link)
+                    if isinstance(err, UpgradedExisting):
+                        self.store.update_part(key, slug=err.slug)
+                        report.upgraded_existing.append(f"{key}: {link}")
+                    else:
+                        report.already_in_mealie.append(f"{key}: {link}")
                 except NeedsReview as err:
                     self.store.record(kind, key, stage, "review", str(err))
                     report.review.append(f"{key}: {err}")
@@ -154,6 +173,47 @@ class Pipeline:
         meta = self.a.videos.metadata(video.canonical_url)
         self.store.set_metadata(video_key, meta.model_dump())
         self.store.ensure_part(video_key, 1, 1)
+
+    def _link_set(self) -> dict[str, str]:
+        """The Existing Link Set: `key -> slug` for every recipe in Mealie that has an `orgURL`."""
+        if self._links is None:
+            self._links = build_link_set(self.a.mealie.list_recipe_summaries())
+        return self._links
+
+    def _foreign_recipe(self, item_key: str) -> str | None:
+        """Slug of a recipe in Mealie with this Video's link that the pipeline did not make, if any."""
+        part = self.store.part(item_key)
+        slug = self._link_set().get(part.video_key)
+        return slug if slug and slug != part.slug else None
+
+    def _linkcheck(self, item_key: str, report: RunReport, dry_run: bool) -> None:
+        """Before any paid work: a Video whose link is already in Mealie is skipped (link = identity)."""
+        slug = self._foreign_recipe(item_key)
+        if slug is None:
+            return
+        if not self.upgrade_existing:
+            raise AlreadyInMealie(slug)
+        self._detail[item_key] = f"will upgrade {slug}"
+
+    def _upgrade_existing(self, item_key: str, slug: str, payload: dict[str, Any]) -> None:
+        """PATCH an older import in place: ingredients, steps, tags (added to its own) and extras
+        (merged). Name, image, rating, comments and dates are not sent, so they stay."""
+        mealie = self.a.mealie
+        current = mealie.get_recipe(slug)
+        have = {t["id"] for t in current.get("tags") or []}
+        tags = list(current.get("tags") or []) + [t for t in payload["tags"] if t["id"] not in have]
+        sent = {
+            "recipeIngredient": payload["recipeIngredient"],
+            "recipeInstructions": payload["recipeInstructions"],
+            "tags": tags,
+            "extras": {**(current.get("extras") or {}), **payload["extras"]},
+        }
+        mealie.patch_recipe(slug, sent)
+        problems = read_back_problems(sent, mealie.get_recipe(slug))
+        if problems:
+            raise StageFailure("read-back differs from what was sent: " + "; ".join(problems))
+        self.store.update_part(item_key, slug=slug)
+        raise UpgradedExisting(slug)
 
     def _extract(self, item_key: str, report: RunReport, dry_run: bool) -> None:
         self._run_extraction(item_key, "strong", [])
@@ -299,6 +359,13 @@ class Pipeline:
         payload = self._payload(recipe, parsed, part.tags or [], item_key, part.video_key, video.platform)
         mealie = self.a.mealie
 
+        # Re-check against a fresh listing: it may have been imported since extraction.
+        foreign = self._foreign_recipe(item_key)
+        if foreign is not None:
+            if not self.upgrade_existing:
+                raise AlreadyInMealie(foreign)
+            self._upgrade_existing(item_key, foreign, payload)
+
         existing = mealie.find_recipe(item_key=item_key)
         if existing is not None and existing.get("recipeIngredient") and self.mode != "update":
             slug = str(existing["slug"])  # already uploaded earlier: record it, write nothing
@@ -321,6 +388,7 @@ class Pipeline:
         link = mealie.recipe_url(slug)
         self.store.update_part(item_key, mealie_url=link, warnings=warnings)
         self._detail[item_key] = "image_missing" if warnings else ""
+        self._link_set()[part.video_key] = slug  # known at once, so a later item cannot repeat it
         report.uploaded.append(f"{item_key}: {link}")
         report.warnings += [f"{item_key}: {w}" for w in warnings]
 
@@ -470,6 +538,22 @@ class JudgeResult:
     score: float
     problems: list[dict[str, Any]]
     descriptions: list[str]
+
+
+class AlreadyInMealie(Exception):
+    """The Video's link is already on a recipe in Mealie: skip it, write nothing."""
+
+    status: Status = "already_in_mealie"
+
+    def __init__(self, slug: str):
+        super().__init__(f"already in Mealie as {slug}")
+        self.slug = slug
+
+
+class UpgradedExisting(AlreadyInMealie):
+    """An existing recipe was upgraded in place (`--upgrade-existing`)."""
+
+    status: Status = "upgraded_existing"
 
 
 class NeedsReview(Exception):

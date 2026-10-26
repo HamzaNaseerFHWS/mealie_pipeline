@@ -67,6 +67,10 @@ class MealieGateway(Protocol):
         """The full recipe whose `extras.item_key` or `orgURL` matches, or None."""
         ...
 
+    def list_recipe_summaries(self) -> list[Recipe]:
+        """Every recipe's summary (`slug`, `name`, `orgURL`, ...) in one call (`perPage=-1`)."""
+        ...
+
     def create_recipe(self, name: str) -> str:
         """Creates an empty recipe and returns its slug."""
         ...

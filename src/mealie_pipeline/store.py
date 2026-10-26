@@ -11,7 +11,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-Status = Literal["pending", "running", "done", "failed", "skipped", "review"]
+Status = Literal[
+    "pending",
+    "running",
+    "done",
+    "failed",
+    "skipped",
+    "review",
+    "already_in_mealie",  # the Video's link is already on a Mealie recipe: nothing more is done
+    "upgraded_existing",  # an old Mealie recipe was PATCHed in place (--upgrade-existing)
+]
 EntityKind = Literal["video", "part"]
 
 MIGRATIONS = [
