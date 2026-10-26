@@ -251,7 +251,11 @@ def test_retry_by_video_key_and_with_an_explicit_stage(world: World):
     assert result.exit_code == 0, result.output
     store = world.store()
     assert store.stage_status("part", ITEM_KEY, "extract") == "done"
-    assert [store.stage_status("part", ITEM_KEY, s) for s in ("tag", "upload")] == [None, None]
+    assert [store.stage_status("part", ITEM_KEY, s) for s in ("tag", "verify", "upload")] == [
+        None,
+        None,
+        None,
+    ]
 
 
 def test_retry_with_nothing_failed_says_so(world: World):
@@ -324,7 +328,8 @@ def test_report_has_one_row_per_recipe_part_and_one_per_video_without_parts(thre
         rows = list(csv.DictReader(handle))
     assert list(rows[0]) == [
         "item_key", "video_url", "platform", "metadata_status", "extract_status", "parse_status",
-        "tag_status", "upload_status", "failure_reason", "mealie_slug", "mealie_url", "created_foods",
+        "tag_status", "verify_status", "upload_status", "score", "outcome", "failed_checks",
+        "extraction_attempts", "failure_reason", "mealie_slug", "mealie_url", "created_foods",
         "tags", "warnings",
     ]  # fmt: skip
     by_video = {r["video_url"]: r for r in rows}
@@ -332,7 +337,9 @@ def test_report_has_one_row_per_recipe_part_and_one_per_video_without_parts(thre
     dal = by_video[watch_url("AAAAAAAAAAA")]
     assert dal["item_key"] == "youtube:AAAAAAAAAAA#1"
     assert dal["platform"] == "youtube"
-    assert [dal[f"{s}_status"] for s in ("metadata", "extract", "parse", "tag", "upload")] == ["done"] * 5
+    assert [dal[f"{s}_status"] for s in ("metadata", "extract", "parse", "tag", "verify", "upload")] == [
+        "done"
+    ] * 6
     assert dal["mealie_slug"] == "dal" and dal["mealie_url"].endswith("/g/home/r/dal")
     assert dal["tags"] == "Dinner;Vegan"
     assert dal["created_foods"] == "3"  # okra, mustard oil, cumin seeds were first created for Video A

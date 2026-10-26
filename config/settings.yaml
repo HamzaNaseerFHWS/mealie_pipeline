@@ -22,3 +22,23 @@ llm:
 images:
   # Seconds to wait when downloading a thumbnail.
   timeout_seconds: 20
+
+verify:
+  # The Gate. The Quality Score is 0-100: a weighted average of the checks that apply, minus the
+  # LLM judge's penalties. A hard-check failure never uploads, whatever the score.
+  upload_at: 80          # at or above: upload
+  review_at: 60          # 60-79: upload with the review tag; below, or a hard fail: retry once, then Review Queue
+  judge_skip_at: 90      # the LLM judge (one extra Claude call) only runs below this score
+  grounding_threshold: 90
+  max_dropped_fraction: 0.2
+  soft_fail_below: 0.75
+  review_tag: To Review
+  # weights:
+  #   H3: 20   # share of ingredients whose quote was found in the Source
+  #   S1: 15   # website vs video agreement (needs a website Source)
+  #   S2: 25   # ingredients <-> steps
+  #   S3: 15   # parse agreement (needs ticket 09)
+  #   S4: 10   # transcript quality (needs a transcript)
+  #   S5: 10   # quantity sanity (needs ticket 09)
+  #   S6: 15   # plausible times and servings
+  # judge_penalties: {blocker: 30, major: 15, minor: 5}

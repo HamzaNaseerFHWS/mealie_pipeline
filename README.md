@@ -87,9 +87,14 @@ Ctrl+C finishes the item in progress, then stops; the next `mp run` continues. A
 | Column | Meaning |
 |---|---|
 | `item_key`, `video_url`, `platform` | identity of the Recipe Part and where it came from |
-| `metadata_status` … `upload_status` | one column per stage: `pending`, `running`, `done`, `failed`, `skipped`, `review`; empty = not reached |
-| `failure_reason` | `<stage>: <last error>` of the first failed stage |
+| `metadata_status` … `upload_status` | one column per stage (`metadata`, `extract`, `parse`, `tag`, `verify`, `upload`): `pending`, `running`, `done`, `failed`, `skipped`, `review`; empty = not reached |
+| `score`, `outcome`, `failed_checks`, `extraction_attempts` | the Gate: Quality Score 0-100, `upload` / `upload_review` / `review`, the IDs of failed checks (H1-H5, S1-S7), and 2 when the recipe was extracted a second time after failing |
+| `failure_reason` | `<stage>: <last error>` of the first failed or held-back stage |
 | `mealie_slug`, `mealie_url` | where the recipe is in Mealie |
 | `created_foods` | Foods first created for this Video |
 | `tags` | tag names, `;`-separated |
 | `warnings` | for example `image_missing` |
+
+## The Gate (`verify` stage)
+
+Every recipe is scored before upload: `>= 80` uploads, `60-79` uploads with the `To Review` tag (created once if missing), below 60 or a failed hard check is extracted once more (strongest model, the findings in the prompt) and otherwise held back in `review/<item_key>.md` (Sources next to the extracted recipe and every failed check) and not uploaded. Ingredients whose quoted evidence is not in the source are dropped. Thresholds and weights are in `config/settings.yaml` under `verify:`. The LLM judge (one extra Claude call) runs only when the score before it is below 90.

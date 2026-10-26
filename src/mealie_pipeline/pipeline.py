@@ -16,19 +16,23 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from mealie_pipeline import grounding
 from mealie_pipeline.adapters import Adapters
-from mealie_pipeline.adapters.llm import LLMError, UsageLimited
+from mealie_pipeline.adapters.llm import LLMError, Tier, UsageLimited
 from mealie_pipeline.adapters.mealie import Catalog, Food, Tag, Unit
 from mealie_pipeline.adapters.video_source import VideoSourceError
 from mealie_pipeline.errors import MealieError
 from mealie_pipeline.images import attach_image, candidate_urls
 from mealie_pipeline.matching import FoodMatcher, UnitNormalizer
-from mealie_pipeline.models import ExtractedRecipe, ParsedIngredient, VideoMeta, extraction_schema
+from mealie_pipeline.models import ExtractedRecipe, Judge, ParsedIngredient, VideoMeta, extraction_schema
 from mealie_pipeline.payload import build_payload
+from mealie_pipeline.review import write_review_file
+from mealie_pipeline.scoring import apply_judge, decide
 from mealie_pipeline.settings import Settings
 from mealie_pipeline.store import StateStore
+from mealie_pipeline.verify import Evaluation, evaluate
 
-STAGES = ["metadata", "extract", "parse", "tag", "upload"]
+STAGES = ["metadata", "extract", "parse", "tag", "verify", "upload"]
 MAX_TAGS = 6
 TO_TASTE = "to taste"
 
@@ -39,6 +43,7 @@ class RunReport:
     failed: list[str] = field(default_factory=list)
     uploaded: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    review: list[str] = field(default_factory=list)
     dry_run_files: list[Path] = field(default_factory=list)
     stopped: str | None = None
 
@@ -96,6 +101,7 @@ class Pipeline:
             "extract": self._extract,
             "parse": self._parse,
             "tag": self._tag,
+            "verify": self._verify,
             "upload": self._upload,
         }
         for index, stage in enumerate(STAGES):
@@ -105,7 +111,7 @@ class Pipeline:
             # Parts exist only once their Video's metadata is done: `extract` has no part-level prerequisite.
             previous = STAGES[index - 1] if index > 1 else None
             # In a dry run nothing past `extract` is recorded, so the later stages preview instead.
-            if dry_run and stage in ("parse", "tag", "upload"):
+            if dry_run and stage in ("parse", "tag", "verify", "upload"):
                 if stage == "upload":
                     self._preview(report, limit)
                 continue
@@ -122,6 +128,9 @@ class Pipeline:
                     self.store.record(kind, key, stage, "pending", str(err))
                     report.stopped = f"Claude usage limit reached: {err}. Run again after it resets."
                     return report
+                except NeedsReview as err:
+                    self.store.record(kind, key, stage, "review", str(err))
+                    report.review.append(f"{key}: {err}")
                 except Exception as err:  # one entity's failure never stops the others
                     self.store.record(kind, key, stage, "failed", describe_error(err))
                     report.failed.append(f"{key} [{stage}]: {describe_error(err)}")
@@ -147,6 +156,10 @@ class Pipeline:
         self.store.ensure_part(video_key, 1, 1)
 
     def _extract(self, item_key: str, report: RunReport, dry_run: bool) -> None:
+        self._run_extraction(item_key, "strong", [])
+
+    def _run_extraction(self, item_key: str, tier: Tier, findings: list[str]) -> None:
+        """One extraction call; on a retry the Gate's findings go into the prompt."""
         part = self.store.part(item_key)
         video = self.store.video(part.video_key)
         meta = VideoMeta.model_validate(video.metadata)
@@ -158,7 +171,12 @@ class Pipeline:
             f"Allowed tag names: {json.dumps(tags, ensure_ascii=False)}\n\n"
             f"[SRC:desc]\n{meta.description}\n[/SRC]\n"
         )
-        raw = self.a.llm.complete("extract", prompt, extraction_schema(tags), "strong")
+        if findings:
+            prompt += (
+                "\nYour previous extraction of this video failed verification. Fix these problems, "
+                "using only what the sources say:\n" + "\n".join(f"- {f}" for f in findings) + "\n"
+            )
+        raw = self.a.llm.complete("extract", prompt, extraction_schema(tags), tier)
         recipe = ExtractedRecipe.model_validate(raw)
         if not recipe.is_recipe:
             raise StageFailure("the description does not contain a recipe")
@@ -176,6 +194,102 @@ class Pipeline:
         part = self.store.part(item_key)
         tags = self._choose_tags(ExtractedRecipe.model_validate(part.extracted))
         self.store.update_part(item_key, tags=tags)
+
+    def _sources(self, video_key: str) -> dict[str, str]:
+        """The Sources the Evidence may cite. Only the description exists so far."""
+        meta = VideoMeta.model_validate(self.store.video(video_key).metadata)
+        return {"desc": meta.description}
+
+    def _evaluate(self, item_key: str) -> Evaluation:
+        part = self.store.part(item_key)
+        return evaluate(
+            ExtractedRecipe.model_validate(part.extracted),
+            [ParsedIngredient.model_validate(p) for p in part.parsed or []],
+            part.tags or [],
+            self._sources(part.video_key),
+            [f.name for f in self.catalog.foods],
+            self.settings.verify,
+        )
+
+    def _verify(self, item_key: str, report: RunReport, dry_run: bool) -> None:
+        cfg = self.settings.verify
+        attempts = 1
+        evaluation = self._evaluate(item_key)
+        judge = self._judge(item_key, evaluation)
+        if decide(judge.score, evaluation.hard_failures, cfg) == "fail":
+            # One retry per run: the strongest tier, with the findings in the prompt.
+            findings = evaluation.findings() + [f"judge: {p}" for p in judge.descriptions]
+            self._run_extraction(item_key, "strongest", findings)
+            self._parse(item_key, report, False)
+            self._tag(item_key, report, False)
+            attempts = 2
+            evaluation = self._evaluate(item_key)
+            judge = self._judge(item_key, evaluation)
+        outcome = decide(judge.score, evaluation.hard_failures, cfg)
+
+        part = self.store.part(item_key)
+        tags = list(part.tags or [])
+        if outcome == "upload_review":
+            tags.append(self._review_tag())
+        if outcome != "fail":  # keep the recipe without its ungrounded ingredients
+            self.store.update_part(
+                item_key,
+                extracted=evaluation.recipe.model_dump(),
+                parsed=[p.model_dump() for p in evaluation.parsed],
+                tags=tags,
+            )
+        verify = {
+            "score": judge.score,
+            "outcome": "review" if outcome == "fail" else outcome,
+            "failed_checks": evaluation.failed_checks + (["S7"] if judge.descriptions else []),
+            "checks": [c.as_dict() for c in evaluation.checks],
+            "dropped_ingredients": evaluation.dropped,
+            "judge_problems": judge.problems,
+            "extraction_attempts": attempts,
+        }
+        self.store.update_part(item_key, verify=verify)
+        if outcome == "fail":
+            path = write_review_file(
+                self.workspace,
+                item_key=item_key,
+                video=self.store.video(part.video_key),
+                sources=self._sources(part.video_key),
+                recipe=evaluation.recipe,
+                verify=verify,
+            )
+            raise NeedsReview(f"score {judge.score}, failed {', '.join(verify['failed_checks'])}; see {path}")
+
+    def _judge(self, item_key: str, evaluation: Evaluation) -> "JudgeResult":
+        """S7: an independent LLM review, only when the deterministic score is below the skip level."""
+        cfg = self.settings.verify
+        score = evaluation.score
+        if evaluation.hard_failures or score >= cfg.judge_skip_at:
+            return JudgeResult(score, [], [])
+        video_key = self.store.part(item_key).video_key
+        sources = "\n".join(f"[SRC:{k}]\n{v}\n[/SRC]" for k, v in self._sources(video_key).items())
+        recipe = json.dumps(evaluation.recipe.model_dump(), ensure_ascii=False, indent=1)
+        prompt = f"Final recipe:\n{recipe}\n\nSources:\n{sources}\n"
+        try:
+            raw = self.a.llm.complete("judge", prompt, Judge.model_json_schema(), "strong")
+            problems = Judge.model_validate(raw).problems
+        except UsageLimited:
+            raise
+        except (LLMError, ValidationError):
+            return JudgeResult(score, [], [])  # an unavailable judge never blocks or fails an item
+        severities = [p.severity for p in problems]
+        return JudgeResult(
+            apply_judge(score, severities, cfg.judge_penalties),
+            [p.model_dump() for p in problems],
+            [f"{p.severity} {p.field}: {p.description}" for p in problems],
+        )
+
+    def _review_tag(self) -> dict[str, Any]:
+        name = self.settings.verify.review_tag
+        existing = next((t for t in self.catalog.tags if t.name.casefold() == name.casefold()), None)
+        if existing is None:
+            existing = self.a.mealie.create_tag(name)  # created once, then found in the catalog
+            self.catalog.tags.append(existing)
+        return {"id": existing.id, "name": existing.name, "slug": existing.slug}
 
     def _upload(self, item_key: str, report: RunReport, dry_run: bool) -> None:
         part = self.store.part(item_key)
@@ -221,9 +335,26 @@ class Pipeline:
                 video = self.store.video(part.video_key)
                 recipe = ExtractedRecipe.model_validate(part.extracted)
                 parsed = self._parse_ingredients(recipe, part.video_key, create=False)
-                payload = self._payload(
-                    recipe, parsed, self._choose_tags(recipe), item_key, part.video_key, video.platform
+                tags = self._choose_tags(recipe)
+                # The deterministic Gate only: no judge call, no retry, no tag created.
+                evaluation = evaluate(
+                    recipe,
+                    parsed,
+                    tags,
+                    self._sources(part.video_key),
+                    [f.name for f in self.catalog.foods],
+                    self.settings.verify,
                 )
+                # Hard checks other than H4 (Foods are not created in a dry run, so ids are missing).
+                hard = [c for c in evaluation.hard_failures if c != "H4"]
+                if hard or evaluation.score < self.settings.verify.review_at:
+                    problems = ", ".join(evaluation.failed_checks)
+                    report.review.append(
+                        f"{item_key}: would go to the Review Queue (score {evaluation.score}, {problems})"
+                    )
+                    continue
+                recipe, parsed = evaluation.recipe, evaluation.parsed
+                payload = self._payload(recipe, parsed, tags, item_key, part.video_key, video.platform)
             except (StageFailure, ValidationError, MealieError) as err:
                 report.failed.append(f"{item_key} [dry-run]: {err}")
                 continue
@@ -263,17 +394,24 @@ class Pipeline:
         self, recipe: ExtractedRecipe, video_key: str, *, create: bool
     ) -> list[ParsedIngredient]:
         result = []
-        for ingredient in recipe.ingredients:
+        # Ingredients the Gate will drop as ungrounded must not leave junk Foods behind in Mealie.
+        ungrounded = set(
+            grounding.ungrounded_ingredients(
+                recipe.ingredients, self._sources(video_key), self.settings.verify.grounding_threshold
+            )
+        )
+        for index, ingredient in enumerate(recipe.ingredients):
             engine = self.a.engine.parse(ingredient.line)
             unit_text = engine.unit if ingredient.quantity_stated else ""
             unit_match = self.units.match(unit_text, self.catalog.units)
             food_match = self.foods.match(engine.food or ingredient.line, self.catalog.foods)
 
             unit: Unit | None = unit_match.unit
-            if unit_match.kind == "new" and create:
+            create_here = create and index not in ungrounded
+            if unit_match.kind == "new" and create_here:
                 unit = self._create_unit(unit_match.new_name, video_key)
             food: Food | None = food_match.food
-            if food_match.kind == "new" and create:
+            if food_match.kind == "new" and create_here:
                 food = self._create_food(food_match.new_name, video_key)
 
             if ingredient.quantity_stated:
@@ -325,6 +463,17 @@ def describe_error(err: Exception) -> str:
     """Expected failures show their message; unexpected ones also name their type."""
     expected = (LLMError, MealieError, VideoSourceError, StageFailure, ValidationError)
     return str(err) if isinstance(err, expected) else f"unexpected {type(err).__name__}: {err}"
+
+
+@dataclass
+class JudgeResult:
+    score: float
+    problems: list[dict[str, Any]]
+    descriptions: list[str]
+
+
+class NeedsReview(Exception):
+    """The Gate held the item back: it goes to the Review Queue and is not uploaded."""
 
 
 class StageFailure(Exception):
