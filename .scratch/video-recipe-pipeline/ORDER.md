@@ -15,6 +15,7 @@ The user wants the recipes from their **CSV/Excel list of recipe names** in Meal
 7. `08-verification-gate`: Grounding, Quality Score, Review Queue
 8. `22-skip-recipes-already-in-mealie`: Existing Link Set (builds the URL Normalizer if ticket 04 hasn't)
 9. `28-import-found-recipes`: found pages through the pipeline into Mealie
+10. `29-parallel-workers` (optional speedup, can be done any time after 28): `mp run --workers N` for the slow stages. Do it before the big import of the remaining names if you want it faster; the later phase numbers below are unchanged.
 
 **Before the first real upload** (the user, on the laptop): finish wayfinder ticket `13-run-mealie-api-check` (token, `check_mealie.py --write-test`). Then run ticket 28's manual check, starting with `--dry-run` and a small `--limit`.
 
