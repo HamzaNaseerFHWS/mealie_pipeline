@@ -31,8 +31,30 @@ class ImageSettings(BaseModel):
     timeout_seconds: float = 20
 
 
+class VerifySettings(BaseModel):
+    """The Gate: thresholds and weights for the Quality Score (0-100)."""
+
+    upload_at: float = 80  # score >= this uploads as is
+    review_at: float = 60  # score >= this (and < upload_at) uploads with the `To Review` tag
+    judge_skip_at: float = 90  # the LLM judge runs only below this deterministic score
+    grounding_threshold: float = 90  # fuzzy containment of an Evidence quote in its Source
+    max_dropped_fraction: float = 0.2  # more ungrounded ingredients (or steps) than this fails H3
+    soft_fail_below: float = 0.75  # a soft check scoring under this is listed as failed
+    # Weight of each component in the weighted average. A check that does not apply yet (no website,
+    # no transcript, no second parse engine) is left out of the average, not counted as zero.
+    weights: dict[str, float] = Field(
+        default_factory=lambda: {"H3": 20, "S1": 15, "S2": 25, "S3": 15, "S4": 10, "S5": 10, "S6": 15}
+    )
+    # Points the LLM judge takes off per problem it reports.
+    judge_penalties: dict[str, float] = Field(
+        default_factory=lambda: {"blocker": 30, "major": 15, "minor": 5}
+    )
+    review_tag: str = "To Review"
+
+
 class Settings(BaseModel):
     mealie: MealieSettings = Field(default_factory=MealieSettings)
+    verify: VerifySettings = Field(default_factory=VerifySettings)
     llm: LlmSettings = Field(default_factory=LlmSettings)
     images: ImageSettings = Field(default_factory=ImageSettings)
     mealie_url: str | None = None
@@ -47,7 +69,7 @@ class Settings(BaseModel):
 
 
 SECRET_FIELDS = {"mealie_url", "mealie_token", "openai_api_key", "openai_max_usd"}
-NESTED_SECTIONS = {"mealie", "llm", "images"}
+NESTED_SECTIONS = {"mealie", "llm", "images", "verify"}
 
 
 def _apply_overrides(data: dict[str, Any], overrides: Mapping[str, str | None]) -> None:

@@ -141,6 +141,8 @@ def run(
         typer.echo(f"dry run: wrote {path}")
     for line in report.warnings:
         typer.echo(f"warning {line}")
+    for line in report.review:
+        typer.echo(f"REVIEW {line}")
     for line in report.failed:
         typer.echo(f"FAILED {line}")
     if report.stopped:
@@ -162,6 +164,9 @@ def status(ctx: typer.Context) -> None:
     console = Console(width=120)
     console.print(table)
     console.print(f"Videos: {len(store.videos())}   Recipe Parts: {len(store.parts())}")
+    retried = sum(1 for p in store.parts() if (p.verify or {}).get("extraction_attempts", 1) > 1)
+    held = sum(1 for p in store.parts() if (p.verify or {}).get("outcome") == "review")
+    console.print(f"Gate: {held} in the Review Queue, {retried} extracted a second time after a failed check")
     errors = store.recent_errors(10)
     if errors:
         console.print("\nRecent errors:")
