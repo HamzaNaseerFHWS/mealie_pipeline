@@ -17,7 +17,7 @@
 
 **Blocked by:** 27, 02, 08, 22
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `spec.md` modules 4 (URL Normalizer), 9–13 and 18; tickets 02, 08, 22, 26, 27; `docs/adr/0003`. Tickets 09, 10, 11 and 13 improve parsing, tagging, languages and usage when they're done, but this ticket doesn't wait for them.
 
