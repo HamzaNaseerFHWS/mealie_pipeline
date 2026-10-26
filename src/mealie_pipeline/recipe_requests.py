@@ -61,6 +61,7 @@ class RecipeRequest:
     last_error: str | None
     category: str | None = None
     position: str | None = None
+    item_key: str | None = None
 
 
 class RecipeRequests:
@@ -148,12 +149,43 @@ class RecipeRequests:
                 r["last_error"],
                 r["category"],
                 r["position"],
+                r["item_key"],
             )
             for r in rows
         ]
 
     def get(self, request_id: int) -> RecipeRequest:
         return next(r for r in self.all() if r.id == request_id)
+
+    def for_item(self, item_key: str) -> RecipeRequest | None:
+        """The first request that became this Recipe Part (the same page can answer several cells)."""
+        return next((r for r in self.all() if r.item_key == item_key), None)
+
+    def set_item_key(self, request_id: int, item_key: str) -> None:
+        self.db.execute(
+            "UPDATE recipe_requests SET item_key = ?, updated_at = datetime('now') WHERE id = ?",
+            (item_key, request_id),
+        )
+        self.db.commit()
+
+    def set_outcome(
+        self,
+        request_id: int,
+        status: str,
+        *,
+        slug: str | None = None,
+        mealie_url: str | None = None,
+        score: float | None = None,
+        reason: str | None = None,
+        last_error: str | None = None,
+    ) -> None:
+        """The import outcome of a found request; the search candidates stay as they were."""
+        self.db.execute(
+            "UPDATE recipe_requests SET status = ?, slug = ?, mealie_url = ?, score = COALESCE(?, score),"
+            " reason = ?, last_error = ?, updated_at = datetime('now') WHERE id = ?",
+            (status, slug, mealie_url, score, reason, last_error, request_id),
+        )
+        self.db.commit()
 
     def with_status(self, status: str) -> list[RecipeRequest]:
         return [r for r in self.all() if r.status == status]

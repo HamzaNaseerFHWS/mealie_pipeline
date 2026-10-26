@@ -23,16 +23,21 @@ from mealie_pipeline.adapters.mealie import Catalog, Food, Tag, Unit
 from mealie_pipeline.adapters.video_source import VideoSourceError
 from mealie_pipeline.errors import MealieError
 from mealie_pipeline.existing_links import build_link_set
+from mealie_pipeline.find import single_recipe
 from mealie_pipeline.images import attach_image, candidate_urls
 from mealie_pipeline.matching import FoodMatcher, UnitNormalizer
 from mealie_pipeline.models import ExtractedRecipe, Judge, ParsedIngredient, VideoMeta, extraction_schema
 from mealie_pipeline.payload import build_payload
+from mealie_pipeline.recipe_extraction import extract_recipes
 from mealie_pipeline.recipe_extraction import format_for_prompt as web_text
+from mealie_pipeline.recipe_requests import RecipeRequest, RecipeRequests
+from mealie_pipeline.request_import import register_found, sync_outcomes
 from mealie_pipeline.review import write_review_file
 from mealie_pipeline.scoring import apply_judge, decide
 from mealie_pipeline.scrape import WebResult, find_web_recipe
 from mealie_pipeline.settings import Settings
 from mealie_pipeline.store import StateStore, Status
+from mealie_pipeline.url_normalizer import normalize_website
 from mealie_pipeline.verify import Evaluation, evaluate
 
 STAGES = ["metadata", "linkcheck", "scrape", "extract", "parse", "tag", "verify", "upload"]
@@ -115,6 +120,34 @@ class Pipeline:
         return self.store.add_video(f"{platform}:{video_id}", platform, video_id, url, canonical_url)
 
     def run(
+        self,
+        *,
+        stages: list[str] | None = None,
+        limit: int | None = None,
+        dry_run: bool = False,
+        mode: str = "skip",
+        upgrade_existing: bool = False,
+        should_stop: Callable[[], bool] = lambda: False,
+    ) -> RunReport:
+        """Runs the stages over every Video and every found Recipe Request that is ready (see `_run`).
+
+        Found requests become work items first; their status is brought up to date at the end, even
+        when the run is interrupted."""
+        requests = RecipeRequests(self.store)
+        register_found(self.store, requests)
+        try:
+            return self._run(
+                stages=stages,
+                limit=limit,
+                dry_run=dry_run,
+                mode=mode,
+                upgrade_existing=upgrade_existing,
+                should_stop=should_stop,
+            )
+        finally:
+            sync_outcomes(self.store, requests)
+
+    def _run(
         self,
         *,
         stages: list[str] | None = None,
@@ -214,6 +247,9 @@ class Pipeline:
 
     def _metadata(self, video_key: str, report: RunReport, dry_run: bool) -> None:
         video = self.store.video(video_key)
+        if video.platform == "web":  # a Recipe Request: there is no video, its metadata was set up front
+            self.store.ensure_part(video_key, 1, 1)
+            return
         meta = self.a.videos.metadata(video.canonical_url)
         self.store.set_metadata(video_key, meta.model_dump())
         self.store.ensure_part(video_key, 1, 1)
@@ -230,8 +266,25 @@ class Pipeline:
         result = WebResult.model_validate_json(path.read_text(encoding="utf-8"))
         return result if result.usable else None
 
+    def _scrape_request_page(self, video_key: str) -> None:
+        """A Recipe Request's chosen page is the only Source: read it into `web.json`."""
+        video = self.store.video(video_key)
+        page = self.a.web.fetch(video.canonical_url)
+        if not page.ok:
+            raise StageFailure(f"could not read the page ({page.blocked or 'HTTP ' + str(page.status)})")
+        recipe = single_recipe(extract_recipes(page.html, page.final_url, self.selectors))
+        if recipe is None:
+            raise StageFailure("the page no longer holds exactly one recipe")
+        result = WebResult(link=video.canonical_url, final_url=page.final_url, recipes=[recipe], chosen=0)
+        path = self._web_path(video_key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(result.model_dump_json(indent=1), encoding="utf-8")
+        self._detail[video_key] = f"{recipe.extraction_method} {page.final_url}"
+
     def _scrape(self, video_key: str, report: RunReport, dry_run: bool) -> None:
         video = self.store.video(video_key)
+        if video.platform == "web":
+            return self._scrape_request_page(video_key)
         meta = VideoMeta.model_validate(video.metadata)
         web = self.settings.web
         comment = self.a.videos.pinned_comments(video.canonical_url) if web.fetch_pinned_comment else ""
@@ -259,10 +312,21 @@ class Pipeline:
             self._links = build_link_set(self.a.mealie.list_recipe_summaries())
         return self._links
 
+    def _link_key(self, video_key: str) -> str:
+        """The key of this item in the Existing Link Set: the Video Key, or the normalized page URL
+        for a Recipe Request (its `orgURL` is the page)."""
+        video = self.store.video(video_key)
+        if video.platform == "web":
+            return normalize_website(video.canonical_url) or video_key
+        return video_key
+
+    def _request_for(self, item_key: str) -> RecipeRequest | None:
+        return RecipeRequests(self.store).for_item(item_key)
+
     def _foreign_recipe(self, item_key: str) -> str | None:
         """Slug of a recipe in Mealie with this Video's link that the pipeline did not make, if any."""
         part = self.store.part(item_key)
-        slug = self._link_set().get(part.video_key)
+        slug = self._link_set().get(self._link_key(part.video_key))
         return slug if slug and slug != part.slug else None
 
     def _linkcheck(self, item_key: str, report: RunReport, dry_run: bool) -> None:
@@ -310,6 +374,13 @@ class Pipeline:
             f"Title: {meta.title}\nUploader: {meta.uploader}\nURL: {video.canonical_url}\n\n"
             f"Allowed tag names: {json.dumps(tags, ensure_ascii=False)}\n\n"
         )
+        request = self._request_for(item_key) if video.platform == "web" else None
+        if request is not None:
+            hint = f" Notes from the sheet: {request.notes}" if request.notes else ""
+            prompt += (
+                f"Requested recipe name: {request.name}.{hint} "
+                "(Context only. Never quote it as Evidence.)\n\n"
+            )
         if web is not None and web.recipe is not None:
             rule = WEB_STRUCTURED_RULE if web.recipe.structured else WEB_TEXT_RULE
             prompt += f"[SRC:web]\n{web_text(web.recipe)}\n[/SRC]\n\n{rule}\n\n"
@@ -479,7 +550,9 @@ class Pipeline:
         link = mealie.recipe_url(slug)
         self.store.update_part(item_key, mealie_url=link, warnings=warnings)
         self._detail[item_key] = "image_missing" if warnings else ""
-        self._link_set()[part.video_key] = slug  # known at once, so a later item cannot repeat it
+        self._link_set()[self._link_key(part.video_key)] = (
+            slug  # known at once, so a later item cannot repeat it
+        )
         report.uploaded.append(f"{item_key}: {link}")
         report.warnings += [f"{item_key}: {w}" for w in warnings]
 
@@ -534,9 +607,25 @@ class Pipeline:
         platform: str,
     ) -> dict[str, Any]:
         canonical = self.store.video(video_key).canonical_url
-        return build_payload(
+        payload = build_payload(
             recipe, parsed, tags, org_url=canonical, item_key=item_key, video_key=video_key, platform=platform
         )
+        request = self._request_for(item_key) if platform == "web" else None
+        if request is not None:
+            payload["extras"] = {
+                "item_key": item_key,
+                "requested_name": request.name,
+                "request_row": request.position or request.row_number,
+                "source": "web-search" if not request.url else "sheet-url",
+                "score": (self.store.part(item_key).verify or {}).get("score", request.score),
+                "pipeline_version": payload["extras"]["pipeline_version"],
+            }
+            if recipe.name.strip().casefold() != request.name.strip().casefold():
+                payload["notes"] = [
+                    *payload["notes"],
+                    {"title": "Requested as", "text": f'Requested as "{request.name}" in the recipe list.'},
+                ]
+        return payload
 
     def _choose_tags(self, recipe: ExtractedRecipe) -> list[dict[str, Any]]:
         by_name = {t.name.casefold(): t for t in self.catalog.tags}

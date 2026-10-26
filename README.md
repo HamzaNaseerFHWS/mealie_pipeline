@@ -133,3 +133,7 @@ When a Video's description or the creator's pinned comment links to a recipe pag
 ## Finding recipe pages for a sheet of names (`find`)
 
 After `mp requests add`, `uv run mp run --stages find [--limit N]` searches the web for every pending request (ddgs first, the Claude WebSearch tool only when it fails or finds nothing usable), reads the top 5 pages and picks the one that is really that recipe. Result per request: `found` (URL stored), `not_found` (with the reason) or `needs_choice`: open `reports/request_choices.csv`, write `1`, `2`, `3`, a URL or `skip` in the `choice` column and run the same command again. See `reports/requests.csv` for the outcome of each row. This stage never writes to Mealie.
+
+## Importing the whole sheet (`mp run`)
+
+`uv run mp run [--limit N] [--dry-run]` does everything for a sheet of names: finds pages for pending requests (`find`), then imports every found page like a Video (check against Mealie by link, read the page, extract, parse, tag, verify, upload). `reports/requests.csv` shows the final status (`imported`, `already_in_mealie`, `review`, `failed`, `not_found`, `needs_choice`), the Mealie link, the Quality Score and the reason for every cell. Re-running never repeats finished work; `mp retry <item_key>` redoes a failed one (the item key is in the request's row of `mp requests`).
