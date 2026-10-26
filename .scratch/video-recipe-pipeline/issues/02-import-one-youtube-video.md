@@ -10,7 +10,7 @@ The full Gate, the second parse engine, rule tags, multi-recipe and languages co
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `spec.md` modules 1, 2, 3 (`LLMBackend`, `VideoSource`), 9, 10, 13; `PIPELINE_SPEC.md` §2b "AI backend" for the exact `claude -p` flags; `docs/adr/0002`, `0003`.
 
