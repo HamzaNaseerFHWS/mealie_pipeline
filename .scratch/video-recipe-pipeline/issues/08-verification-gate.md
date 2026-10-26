@@ -25,7 +25,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `spec.md` modules 12 and 15; `PIPELINE_SPEC.md` §9; wayfinder ticket `10-verification-gate.md`.
 
