@@ -48,9 +48,10 @@ MIGRATIONS = [
         PRIMARY KEY (entity_kind, entity_key, stage)
     );
     """,
+    "ALTER TABLE recipe_parts ADD COLUMN verify_json TEXT;",
 ]
 
-PART_JSON_FIELDS = {"extracted", "parsed", "tags"}
+PART_JSON_FIELDS = {"extracted", "parsed", "tags", "verify"}
 PART_FIELDS = PART_JSON_FIELDS | {"slug", "mealie_url", "warnings"}
 
 
@@ -76,6 +77,7 @@ class RecipePart:
     slug: str | None
     mealie_url: str | None
     warnings: list[str]
+    verify: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -175,6 +177,7 @@ class StateStore:
             row["slug"],
             row["mealie_url"],
             json.loads(row["warnings_json"]),
+            _loads(row["verify_json"]),
         )
 
     def parts(self) -> list[RecipePart]:
