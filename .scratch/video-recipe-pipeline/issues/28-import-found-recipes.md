@@ -62,3 +62,16 @@ A plain `mp run` now takes a sheet of names all the way into Mealie: `find` (tic
 4. Dry run on the found ones: `uv run mp run --limit 5 --dry-run`, then look at the payloads in `work/payloads/` (ingredients with units and foods, the page as `orgURL`, `extras.requested_name`).
 5. Real import: `uv run mp run --limit 5`. Open the recipes in Mealie from `reports/requests.csv` (`mealie_url`): amounts, units and foods on each ingredient, at least one tag, the image, and the `To Review` tag on borderline ones. Look in `review/` for held-back ones.
 6. Run `uv run mp run --limit 5` again: nothing new is written. Then drop `--limit` to do the rest (Ctrl+C stops between items; a Claude usage limit stops the run with a message; run again later).
+
+### First real import on the laptop (2026-10-26)
+
+French Toast, Avocado-Sandwich, then batches of 20 and 50 from `food_list_kategorien.csv.csv` (grid layout; ingredient-only columns "Prep / ...", "Proteins" and repeated names were removed from the State Store first, 379 -> 307 requests). 38 imported, 5 review, 7 failed, 16 waiting for a choice, 6 not found, 235 pending after the first 72 names.
+
+- **Mealie v3.22.0 has no `extras` queryFilter** (`extras.key` / `extras.item_key` both give `400 ... does not exist on this schema`); the `org_url` filter works. `MealieHttpGateway.find_recipe` now tries the `extras` filter and falls back to `org_url`; `_upload` passes the page URL. Without a URL the item-key lookup finds nothing on such a Mealie. Wayfinder 13 never confirmed this; see its Comments.
+- **Mealie timeout:** `GET /api/foods?perPage=-1` (1,945 foods) takes about 15 s, so the 20 s default sometimes fails with `ReadTimeout` in `extract`. Run with `MEALIE__TIMEOUT_SECONDS=60` (put it in `.env`).
+- **Open problems found:**
+  - Two `parse` crashes: `ValueError: could not convert string to float: 'half'` and `'3-#1$2-4'` (quantity text the parser cannot read). Not fixed; ticket 09 reworks parsing.
+  - Three pages (two on bettybossi.ch) give "the extraction has no ingredients or no steps".
+  - Short German names match the wrong page ("Tee" imported "Tee's Corn Pudding"). German and Urdu/Hindi handling waits for ticket 11.
+  - German pages score lower (60-70, `To Review` tag); English and desi pages mostly 85-100.
+- A `--limit N` on a plain `mp run` limits the find stage; the import then runs for every `found` request.

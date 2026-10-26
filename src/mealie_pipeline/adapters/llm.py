@@ -82,10 +82,8 @@ class ClaudeCliBackend:
         try:
             done = subprocess.run(
                 self.build_args(exe, task, schema, tier),
-                input=prompt,
+                input=prompt.encode("utf-8"),  # bytes: text mode rewrites line endings on Windows
                 capture_output=True,
-                encoding="utf-8",
-                errors="replace",
                 timeout=self.timeout_seconds,
                 check=False,
             )
@@ -93,7 +91,11 @@ class ClaudeCliBackend:
             raise LLMError(f"claude timed out after {self.timeout_seconds:.0f}s") from err
         except OSError as err:
             raise LLMError(f"could not run claude: {err}") from err
-        return self._parse(done.returncode, done.stdout, done.stderr)
+        return self._parse(
+            done.returncode,
+            done.stdout.decode("utf-8", errors="replace"),
+            done.stderr.decode("utf-8", errors="replace"),
+        )
 
     @staticmethod
     def _parse(returncode: int, stdout: str, stderr: str) -> dict[str, Any]:

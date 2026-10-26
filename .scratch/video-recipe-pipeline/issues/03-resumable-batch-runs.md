@@ -50,3 +50,7 @@ One Video failing never stops the others. Ctrl+C finishes the current entity and
 5. Press Ctrl+C during a run: it should say it is finishing the current item and stop; `mp run` continues.
 6. If one fails: `uv run mp retry <item_key>` then `uv run mp run`.
 7. Try `uv run mp reset extract` then `uv run mp run --mode update`: recipes are updated in place, none duplicated.
+
+### State Store opened in WAL mode (2026-10-26)
+
+`StateStore` now sets `journal_mode=WAL` and a 60 s lock wait (`BUSY_TIMEOUT_SECONDS`) so `mp run --stages find` and an import run can use `pipeline.db` at the same time (find works on `pending` requests, the import on `found` ones). New files `pipeline.db-wal` / `-shm` appear next to the database (git-ignored). Back up `pipeline.db` before the first run with this code: the file is converted once and older code cannot read it. Two stores writing at once are tested in `tests/test_store.py`.

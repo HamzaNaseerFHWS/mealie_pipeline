@@ -68,3 +68,7 @@
 4. If some say `needs_choice`, open `reports/request_choices.csv` (and `review/request-*.md`), fill `choice` with `1`, `2`, `3`, a URL or `skip`, and run the same command again.
 5. If everything says "Every search source failed", `ddgs` is blocked or rate-limited and the Claude fallback failed too: check `uv run mp doctor` and try again later.
 6. Then run without `--limit`; it continues with the pending requests (press Ctrl+C to stop between requests).
+
+### `find.accept_first_score` (2026-10-26)
+
+New optional setting (`config/settings.yaml`, set to 0.9; unset = always ask). When the best candidate scores at least this, it is taken even without the `accept_lead` margin, so a tie of near-identical pages (French Toast: three pages at 1.00) no longer needs a choice. A best candidate below it still goes to the user. Tested in `tests/test_find_pure.py`.

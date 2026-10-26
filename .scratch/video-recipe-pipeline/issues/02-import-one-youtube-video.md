@@ -85,3 +85,7 @@ A hand-built structured ingredient list was written to the real instance (recipe
 - **Unit-less and quantity-less lines are valid.** `unit: null`; `quantity: 0` for "to taste" / "as required".
 - Unit creation needs `abbreviation: ""`, not null (422 otherwise); see ticket 01's Comments.
 - The new-Food/Unit log (`created_foods.csv`, `created_units.csv`) should record the video the name first came from, so a bad auto-created entry can be traced and merged (`PUT /api/foods/merge`).
+
+### Windows fix: prompt bytes on stdin (2026-10-26)
+
+`ClaudeCliBackend` passed the prompt as text, so on Windows Python rewrote every `\n` as `\r\n` before it reached `claude`. The contract test caught it on the laptop (it passed on Linux). The prompt is now sent as UTF-8 bytes and the output decoded with `errors="replace"`. On the laptop `mp doctor` also needs `claude` on PATH: see the README's *Project-local tools*.

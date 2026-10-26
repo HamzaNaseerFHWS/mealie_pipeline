@@ -137,3 +137,7 @@ After `mp requests add`, `uv run mp run --stages find [--limit N]` searches the 
 ## Importing the whole sheet (`mp run`)
 
 `uv run mp run [--limit N] [--dry-run]` does everything for a sheet of names: finds pages for pending requests (`find`), then imports every found page like a Video (check against Mealie by link, read the page, extract, parse, tag, verify, upload). `reports/requests.csv` shows the final status (`imported`, `already_in_mealie`, `review`, `failed`, `not_found`, `needs_choice`), the Mealie link, the Quality Score and the reason for every cell. Re-running never repeats finished work; `mp retry <item_key>` redoes a failed one (the item key is in the request's row of `mp requests`).
+
+## Project-local tools (Windows)
+
+Nothing needs to be installed system-wide. `.tools/` (git-ignored) holds `bin/claude.exe` (a copy of the VS Code extension's binary, logged in with the Pro subscription), `bin/ffmpeg.exe` and `nltk_data/`. In each PowerShell window run `. .\scripts\env.ps1` first; it puts `.tools\bin` on PATH and sets `NLTK_DATA` for that window only. Also set `MEALIE__TIMEOUT_SECONDS=60` (in `.env` or the window): Mealie's foods list takes about 15 s.

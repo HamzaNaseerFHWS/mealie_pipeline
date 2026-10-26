@@ -36,3 +36,11 @@ A token was created at *Profile → API Tokens* and a recipe was written by hand
 - Still unverified, so this stays open: tags, `extras`, the `org_url` search, image upload, delete, and the catalog and per-site recipe counts that `check_mealie.py --write-test` reports.
 - A leftover test recipe `chatpata-bhindi-aloo` and some new foods/units are in the instance; details are in the Comments of implementation ticket 01. Delete the recipe before reading the existing-recipe counts for ticket 22.
 - Gotchas found are written up in ticket 01's Comments (`abbreviation` must be `""` not null; catalog names need case-insensitive matching).
+
+### Partial run on the laptop, 2026-10-26 (does not resolve this ticket)
+
+`scripts/check_mealie.py --write-test` passed its read-only steps against v3.22.0: token works (admin, Home/Family), 128 recipes, 53 tags, 7 categories, 1,945 foods, 26 units. Recipes by source: instagram.com 94, no source URL 24, youtube.com 5, facebook.com 2, three other sites 1 each. The write test then timed out on `POST /api/recipes` (Mealie went unresponsive for a while); not repeated. Findings that matter later:
+
+- `queryFilter` on `extras.*` is **not supported** on v3.22.0 (400). `org_url="..."` works. See ticket 28's Comments.
+- `GET /api/foods?perPage=-1` takes about 15 s.
+- The real pipeline has since created, read back and tagged recipes on this instance (ticket 28), so write access with the token is confirmed in practice.
