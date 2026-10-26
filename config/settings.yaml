@@ -50,3 +50,17 @@ web:
   max_pages: 3              # candidate links tried per Video
   fetch_pinned_comment: true   # also look for the recipe link in the creator's pinned comment
   robots_allowlist: []      # domains whose robots.txt is not consulted, e.g. your own site
+
+find:
+  # Turning a recipe name into the right recipe page (`mp run --stages find`).
+  query_templates: {en: "{name} recipe", de: "{name} Rezept", ur: "{name} recipe", hi: "{name} recipe"}
+  regions: {en: us-en, de: de-de, ur: pk-en, hi: in-en}
+  default_language: en
+  search_results: 10        # hits asked of the search source per name
+  candidates: 5             # pages fetched per name
+  search_delay_seconds: 3   # between two queries to the same source (ddgs can rate-limit)
+  accept_score: 0.75        # best candidate at least this ...
+  accept_lead: 0.1          # ... and this far ahead of the runner-up, else you pick from the top 3
+  min_name_similarity: 0.35 # a page whose recipe name is less alike than this is not a candidate
+  use_claude_fallback: true # claude -p with WebSearch when ddgs fails or finds nothing usable
+  # weights: {name: 0.5, structure: 0.15, completeness: 0.2, language: 0.15}

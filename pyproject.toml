@@ -19,6 +19,7 @@ dependencies = [
     "recipe-scrapers>=15.13.0",
     "selectolax>=1.0.2",
     "trafilatura>=2.3.1",
+    "ddgs==9.16.1",
 ]
 
 [project.scripts]

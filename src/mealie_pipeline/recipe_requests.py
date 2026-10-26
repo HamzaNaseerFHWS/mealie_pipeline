@@ -152,6 +152,39 @@ class RecipeRequests:
             for r in rows
         ]
 
+    def get(self, request_id: int) -> RecipeRequest:
+        return next(r for r in self.all() if r.id == request_id)
+
+    def with_status(self, status: str) -> list[RecipeRequest]:
+        return [r for r in self.all() if r.status == status]
+
+    def set_result(
+        self,
+        request_id: int,
+        status: str,
+        *,
+        chosen_url: str | None = None,
+        candidates: list[dict[str, Any]] | None = None,
+        score: float | None = None,
+        reason: str | None = None,
+        last_error: str | None = None,
+    ) -> None:
+        """Records what a stage found out about a request."""
+        self.db.execute(
+            "UPDATE recipe_requests SET status = ?, chosen_url = ?, candidates_json = ?, score = ?,"
+            " reason = ?, last_error = ?, updated_at = datetime('now') WHERE id = ?",
+            (
+                status,
+                chosen_url,
+                json.dumps(candidates or [], ensure_ascii=False),
+                score,
+                reason,
+                last_error,
+                request_id,
+            ),
+        )
+        self.db.commit()
+
     def counts(self) -> dict[str, int]:
         rows = self.db.execute("SELECT status, COUNT(*) AS n FROM recipe_requests GROUP BY status")
         return {r["status"]: r["n"] for r in rows}

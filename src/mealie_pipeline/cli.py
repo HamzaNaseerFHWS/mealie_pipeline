@@ -5,19 +5,24 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+import yaml
 from rich.console import Console
 from rich.table import Table
 
 from mealie_pipeline.adapters import Adapters, build_adapters
 from mealie_pipeline.doctor import exit_code, render, run_doctor
-from mealie_pipeline.pipeline import STAGES, Pipeline
+from mealie_pipeline.find import SitePolicy
+from mealie_pipeline.pipeline import STAGES, Pipeline, RunReport
 from mealie_pipeline.recipe_requests import STATUSES as REQUEST_STATUSES
 from mealie_pipeline.recipe_requests import RecipeRequests, write_requests_report
 from mealie_pipeline.reports import STATUSES, write_report
+from mealie_pipeline.request_finder import RequestFinder
 from mealie_pipeline.request_sheet import SheetError, read_sheet
 from mealie_pipeline.settings import Settings, load_settings
 from mealie_pipeline.store import StateStore
 from mealie_pipeline.url_normalizer import normalize
+
+REQUEST_STAGES = ("find",)  # stages of Recipe Requests, run with `mp run --stages find`
 
 app = typer.Typer(
     help="Turn saved cooking videos into parsed, tagged recipes in Mealie.", no_args_is_help=True
@@ -118,10 +123,13 @@ def run(
     """Take every registered Video through metadata, extract, parse, tag and upload."""
     app_ctx: AppContext = ctx.obj
     chosen = [s.strip() for s in stages.split(",")] if stages else None
-    unknown = [s for s in chosen or [] if s not in STAGES]
+    unknown = [s for s in chosen or [] if s not in STAGES and s not in REQUEST_STAGES]
     if unknown:
-        typer.echo(f"unknown stage(s): {', '.join(unknown)}. Stages: {', '.join(STAGES)}")
+        typer.echo(f"unknown stage(s): {', '.join(unknown)}. Stages: {', '.join([*REQUEST_STAGES, *STAGES])}")
         raise typer.Exit(2)
+    find_requested = "find" in (chosen or [])
+    if chosen is not None:
+        chosen = [s for s in chosen if s != "find"]
     if mode not in ("skip", "update"):
         typer.echo("--mode must be skip or update")
         raise typer.Exit(2)
@@ -136,15 +144,26 @@ def run(
         typer.echo("Ctrl+C: finishing the current item, then stopping (press again to abort)...")
 
     previous_handler = signal.signal(signal.SIGINT, on_interrupt)
+    find_failed = False
     try:
-        report = pipeline.run(
-            stages=chosen,
-            limit=limit,
-            dry_run=dry_run,
-            mode=mode,
-            upgrade_existing=upgrade_existing,
-            should_stop=lambda: interrupted,
-        )
+        if find_requested:
+            find_failed = _run_find(app_ctx, pipeline, limit, lambda: interrupted)
+        if chosen is None or chosen:
+            report = pipeline.run(
+                stages=chosen,
+                limit=limit,
+                dry_run=dry_run,
+                mode=mode,
+                upgrade_existing=upgrade_existing,
+                should_stop=lambda: interrupted,
+            )
+        else:  # only `find` was asked for
+            report = RunReport()
+            report.stopped = (
+                "Interrupted after the current request. Run again to continue."
+                if (interrupted and find_failed)
+                else None
+            )
     finally:
         signal.signal(signal.SIGINT, previous_handler)
     for stage in STAGES:
@@ -171,7 +190,49 @@ def run(
         typer.echo(f"FAILED {line}")
     if report.stopped:
         typer.echo(report.stopped)
-    raise typer.Exit(1 if report.failed or report.stopped else 0)
+    raise typer.Exit(1 if report.failed or report.stopped or find_failed else 0)
+
+
+def _run_find(app_ctx: AppContext, pipeline: Pipeline, limit: int | None, should_stop) -> bool:
+    """The `find` stage for Recipe Requests; returns True when it stopped early (outage, Ctrl+C)."""
+    requests = RecipeRequests(pipeline.store)
+    policy_file = app_ctx.workspace / "config" / "recipe_sites.yaml"
+    policy = SitePolicy.from_config(
+        yaml.safe_load(policy_file.read_text(encoding="utf-8")) if policy_file.is_file() else {}
+    )
+    finder = RequestFinder(
+        app_ctx.workspace,
+        app_ctx.settings.find,
+        requests,
+        app_ctx.adapters.search,
+        app_ctx.adapters.search_fallback,
+        app_ctx.adapters.web,
+        pipeline.selectors,
+        policy,
+    )
+    result = finder.run(limit=limit, should_stop=should_stop)
+    for line in result.choices_applied:
+        typer.echo(f"choice applied {line}")
+    for line in result.found:
+        typer.echo(f"found {line}")
+    for line in result.needs_choice:
+        typer.echo(f"needs_choice {line}")
+    for line in result.not_found:
+        typer.echo(f"not_found {line}")
+    for line in result.warnings:
+        typer.echo(f"warning {line}")
+    counts = requests.counts()
+    typer.echo(
+        f"find: {len(result.found)} found, {len(result.needs_choice)} need a choice, "
+        f"{len(result.not_found)} not found ({result.searched} searches, {result.fallback_used} "
+        f"with the Claude fallback). Pending: {counts.get('pending', 0)}"
+    )
+    if counts.get("needs_choice"):
+        typer.echo("Fill the `choice` column in reports/request_choices.csv, then run this stage again.")
+    if result.stopped:
+        typer.echo(result.stopped)
+    write_requests_report(requests, app_ctx.workspace)
+    return result.stopped is not None
 
 
 @app.command()

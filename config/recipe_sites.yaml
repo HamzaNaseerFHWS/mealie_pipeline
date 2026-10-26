@@ -1,0 +1,19 @@
+# Pages the `find` stage never picks, on top of the social/shop/affiliate hosts built into links.py.
+# Domains match the host and its subdomains.
+deny_domains:
+  - pinterest.com
+  - pinterest.de
+  - pinterest.co.uk
+  - quora.com
+  - medium.com
+  - wikipedia.org
+  - tripadvisor.com
+  - yelp.com
+  - lieferando.de
+  - ubereats.com
+# Hit titles that are lists of recipes, not one recipe ("25 best chicken recipes").
+listicle_title_patterns:
+  - '^\s*\d+\s+(best|easy|quick|healthy|top|delicious|beste|leckere|einfache)\b'
+  - '\b(best|top)\s+\d+\b'
+  - '\b\d+\s+(recipes|rezepte|ideas|ideen)\b'
+  - '\b(roundup|round-up|collection|sammlung)\b'
