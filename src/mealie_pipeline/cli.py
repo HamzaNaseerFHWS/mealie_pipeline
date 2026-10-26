@@ -11,7 +11,10 @@ from rich.table import Table
 from mealie_pipeline.adapters import Adapters, build_adapters
 from mealie_pipeline.doctor import exit_code, render, run_doctor
 from mealie_pipeline.pipeline import STAGES, Pipeline
+from mealie_pipeline.recipe_requests import STATUSES as REQUEST_STATUSES
+from mealie_pipeline.recipe_requests import RecipeRequests, write_requests_report
 from mealie_pipeline.reports import STATUSES, write_report
+from mealie_pipeline.request_sheet import SheetError, read_sheet
 from mealie_pipeline.settings import Settings, load_settings
 from mealie_pipeline.store import StateStore
 from mealie_pipeline.url_normalizer import normalize
@@ -225,3 +228,89 @@ def report(ctx: typer.Context) -> None:
     app_ctx: AppContext = ctx.obj
     path = write_report(_open_pipeline(app_ctx).store, app_ctx.workspace)
     typer.echo(f"wrote {path}")
+
+
+requests_app = typer.Typer(help="Recipe Requests: a one-off sheet of recipe names to find and import.")
+app.add_typer(requests_app, name="requests")
+
+
+def _open_requests(ctx: typer.Context) -> tuple[RecipeRequests, Path]:
+    app_ctx: AppContext = ctx.obj
+    return RecipeRequests(StateStore(app_ctx.workspace / "pipeline.db")), app_ctx.workspace
+
+
+@requests_app.callback(invoke_without_command=True)
+def requests_list(ctx: typer.Context) -> None:
+    """Without a subcommand: status counts and the latest errors."""
+    if ctx.invoked_subcommand is not None:
+        return
+    requests, workspace = _open_requests(ctx)
+    counts = requests.counts()
+    table = Table(title="Recipe Requests")
+    table.add_column("status")
+    table.add_column("count", justify="right")
+    for name in REQUEST_STATUSES:
+        table.add_row(name, str(counts.get(name, 0)))
+    console = Console(width=120)
+    console.print(table)
+    console.print(f"Requests: {sum(counts.values())}")
+    errors = requests.recent_errors(10)
+    if errors:
+        console.print("\nRecent errors:")
+        for r in errors:
+            console.print(f"  row {r.row_number} {r.name}: {r.last_error}", markup=False)
+    write_requests_report(requests, workspace)
+
+
+@requests_app.command("add")
+def requests_add(
+    ctx: typer.Context,
+    file: Annotated[Path, typer.Option("--file", help="A .csv or .xlsx with a header row.")],
+    sheet: Annotated[str | None, typer.Option(help="Worksheet name (default: the first).")] = None,
+) -> None:
+    """Register one Recipe Request per row of a CSV or Excel sheet of recipe names."""
+    requests, workspace = _open_requests(ctx)
+    try:
+        parsed = read_sheet(file, sheet)
+    except (SheetError, OSError) as err:
+        typer.echo(f"cannot import {file}: {err}")
+        raise typer.Exit(2) from err
+    new, known = requests.add_rows(parsed.rows, file.name)
+    for warning in parsed.warnings:
+        typer.echo(f"warning {warning}")
+    if parsed.duplicates:
+        names = "; ".join(parsed.duplicates)
+        typer.echo(f"{len(parsed.duplicates)} duplicate name(s) in the sheet, registered once: {names}")
+    typer.echo(f"{new} new, {known} already known")
+    write_requests_report(requests, workspace)
+
+
+@requests_app.command("retry")
+def requests_retry(
+    ctx: typer.Context, ref: Annotated[str, typer.Argument(help="A row number or a recipe name.")]
+) -> None:
+    """Put a request back to pending so the next run tries it again."""
+    requests, workspace = _open_requests(ctx)
+    reset, finished = requests.retry(ref)
+    for r in finished:
+        typer.echo(f"row {r.row_number} {r.name}: already {r.status}, left alone")
+    if not reset and not finished:
+        typer.echo(f"no request matches {ref!r}")
+        raise typer.Exit(1)
+    for r in reset:
+        typer.echo(f"row {r.row_number} {r.name}: back to pending")
+    write_requests_report(requests, workspace)
+
+
+@requests_app.command("reset")
+def requests_reset(
+    ctx: typer.Context,
+    failed_only: Annotated[bool, typer.Option("--failed-only", help="Reset the failed requests.")] = False,
+) -> None:
+    """Put failed requests back to pending."""
+    if not failed_only:
+        typer.echo("only `mp requests reset --failed-only` exists: pass --failed-only")
+        raise typer.Exit(2)
+    requests, workspace = _open_requests(ctx)
+    typer.echo(f"{requests.reset_failed()} failed request(s) back to pending")
+    write_requests_report(requests, workspace)

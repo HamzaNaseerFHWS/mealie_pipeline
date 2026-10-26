@@ -98,3 +98,14 @@ Ctrl+C finishes the item in progress, then stops; the next `mp run` continues. A
 ## The Gate (`verify` stage)
 
 Every recipe is scored before upload: `>= 80` uploads, `60-79` uploads with the `To Review` tag (created once if missing), below 60 or a failed hard check is extracted once more (strongest model, the findings in the prompt) and otherwise held back in `review/<item_key>.md` (Sources next to the extracted recipe and every failed check) and not uploaded. Ingredients whose quoted evidence is not in the source are dropped. Thresholds and weights are in `config/settings.yaml` under `verify:`. The LLM judge (one extra Claude call) runs only when the score before it is below 90.
+
+## Recipe Requests (a sheet of recipe names)
+
+```
+uv run mp requests add --file recipes.xlsx [--sheet "Sheet1"]   # or recipes.csv; one Recipe Request per row
+uv run mp requests                                              # status counts and the latest errors
+uv run mp requests retry <row number | name>                    # back to pending
+uv run mp requests reset --failed-only
+```
+
+First row = header. Columns (any order, case-insensitive): `name` (also `recipe`, `title`, `rezept`; required), `url`, `language` (`en`, `de`, `ur`/`hi`), `notes`, `cuisine` (German `sprache`, `notizen`, `küche` work too). A single column with no header is a plain list of names. CSV: UTF-8 with or without BOM, comma/semicolon/tab sniffed. Blank rows and rows starting with `#` are ignored, duplicate names are registered once, and importing the same file again adds nothing ("N new, M already known"). `reports/requests.csv` is rewritten after every command. Old `.xls` files are rejected: save as `.xlsx` or `.csv`. Finding the pages and importing them is tickets 27 and 28.
