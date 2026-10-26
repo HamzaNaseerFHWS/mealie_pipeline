@@ -17,7 +17,7 @@ It exits non-zero if a required check fails, with a one-line fix hint per failur
 
 **Never use** `POST /api/recipes/create/*` (incl. `create/html-or-json`) or `/api/parser/*`; see ADR 0001 *Considered Options*. Always PATCH, never PUT, on recipes.
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `spec.md` (Implementation Decisions: platform/tooling, workspace/config, Adapters → `MealieGateway`; Testing Decisions), wayfinder ticket `03-mealie-api-contract.md` (exact endpoints and rules), `scripts/check_mealie.py` (a stdlib prototype of the same checks; keep it working as a no-install fallback).
 
