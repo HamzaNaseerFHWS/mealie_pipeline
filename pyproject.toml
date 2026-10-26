@@ -1,0 +1,54 @@
+[project]
+name = "mealie-pipeline"
+version = "0.1.0"
+description = "Turns saved cooking videos into parsed, tagged recipes in Mealie."
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "yt-dlp>=2024.8.6",
+    "playwright>=1.45",
+    "typer>=0.12",
+    "rich>=13.7",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+mp = "mealie_pipeline.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-httpserver>=1.0.10",
+    "ruff>=0.5",
+    "pyright>=1.1.370",
+    "types-pyyaml",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mealie_pipeline"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["src", "tests"]
+# Pre-existing standalone files (the stdlib fallback check and the original prototype) stay as they are.
+extend-exclude = ["scripts", "mealie_test.py", "PIPELINE_SPEC.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "basic"
+pythonVersion = "3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not mealie_live'"
+markers = ["mealie_live: runs against a real Mealie (set MEALIE_IT_URL and MEALIE_IT_TOKEN); never in CI"]

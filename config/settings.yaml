@@ -1,0 +1,11 @@
+# Pipeline settings. Anything here can be overridden by an environment variable or `.env`:
+# nested keys use a double underscore, e.g. MEALIE__TIMEOUT_SECONDS=30.
+# Secrets (MEALIE_URL, MEALIE_TOKEN, OPENAI_API_KEY, OPENAI_MAX_USD) live only in `.env`.
+
+mealie:
+  # Seconds to wait for any single Mealie response.
+  timeout_seconds: 20
+  # Connection errors are retried this many times (after the first try) with exponential backoff.
+  max_retries: 3
+  # First backoff delay in seconds; doubles on every retry (1, 2, 4).
+  backoff_seconds: 1.0
