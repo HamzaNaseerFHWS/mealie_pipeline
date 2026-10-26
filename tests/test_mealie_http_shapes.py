@@ -64,6 +64,20 @@ def test_find_by_org_url_sends_a_snake_case_query_filter(server, gateway):
     assert last(server).query == {"queryFilter": 'org_url="https://youtu.be/x"'}
 
 
+def test_find_falls_back_to_org_url_when_mealie_lacks_the_extras_filter(server, gateway):
+    server.extras_filter_supported = False
+    slug = gateway.create_recipe("Dal")
+    gateway.patch_recipe(slug, {"orgURL": "https://example.com/dal", "extras": {"item_key": "web:1#1"}})
+    found = gateway.find_recipe(item_key="web:1#1", org_url="https://example.com/dal")
+    assert found is not None and found["slug"] == slug
+    assert gateway.find_recipe(item_key="web:2#1", org_url="https://example.com/other") is None
+
+
+def test_item_key_alone_finds_nothing_when_mealie_lacks_the_extras_filter(server, gateway):
+    server.extras_filter_supported = False
+    assert gateway.find_recipe(item_key="web:1#1") is None
+
+
 def test_upload_image_is_multipart_with_image_file_and_extension_field(server, gateway, tmp_path):
     slug = gateway.create_recipe("Dal")
     image = tmp_path / "cover.png"

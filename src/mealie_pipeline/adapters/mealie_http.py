@@ -147,14 +147,23 @@ class MealieHttpGateway:
         self._request("DELETE", f"/api/recipes/{slug}")
 
     def find_recipe(self, *, item_key: str | None = None, org_url: str | None = None) -> Recipe | None:
+        queries = []
+        if item_key is not None:
+            queries.append(f'extras.key="item_key" AND extras.value="{item_key}"')
         if org_url is not None:
-            query = f'org_url="{org_url}"'
-        elif item_key is not None:
-            query = f'extras.key="item_key" AND extras.value="{item_key}"'
-        else:
+            queries.append(f'org_url="{org_url}"')
+        if not queries:
             raise ValueError("find_recipe needs item_key or org_url")
-        items = self._request("GET", "/api/recipes", params={"queryFilter": query}).json()["items"]
-        return self.get_recipe(items[0]["slug"]) if items else None
+        for query in queries:
+            try:
+                items = self._request("GET", "/api/recipes", params={"queryFilter": query}).json()["items"]
+            except MealieHttpError as err:
+                if err.status != 400 or query.startswith("org_url"):
+                    raise
+                continue  # Mealie v3.22 has no `extras` filter: fall back to the source URL
+            if items:
+                return self.get_recipe(items[0]["slug"])
+        return None
 
     # -- images ---------------------------------------------------------------------------
 

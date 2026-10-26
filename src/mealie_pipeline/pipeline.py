@@ -526,7 +526,7 @@ class Pipeline:
                 raise AlreadyInMealie(foreign)
             self._upgrade_existing(item_key, foreign, payload)
 
-        existing = mealie.find_recipe(item_key=item_key)
+        existing = mealie.find_recipe(item_key=item_key, org_url=payload.get("orgURL"))
         if existing is not None and existing.get("recipeIngredient") and self.mode != "update":
             slug = str(existing["slug"])  # already uploaded earlier: record it, write nothing
             self.store.update_part(item_key, slug=slug, mealie_url=mealie.recipe_url(slug))

@@ -36,6 +36,7 @@ class FakeMealieServer:
         self.fake = fake
         self.requests: list[Recorded] = []
         self.flaky_failures = 0
+        self.extras_filter_supported = True  # Mealie v3.22 rejects `extras.*` filters
         httpserver.expect_request(re.compile(r"^/.*")).respond_with_handler(self._handle)
 
     def _handle(self, request: Request) -> Response:
@@ -116,6 +117,10 @@ class FakeMealieServer:
             return _json({"items": self.fake.list_recipe_summaries()})
         if m := re.fullmatch(r'org_url="(.*)"', query_filter):
             found = self.fake.find_recipe(org_url=m.group(1))
+        elif not self.extras_filter_supported and query_filter.startswith("extras."):
+            return _json(
+                {"detail": "invalid attribute string: 'extras.key' does not exist on this schema"}, 400
+            )
         elif m := re.fullmatch(r'extras\.key="item_key" AND extras\.value="(.*)"', query_filter):
             found = self.fake.find_recipe(item_key=m.group(1))
         else:
