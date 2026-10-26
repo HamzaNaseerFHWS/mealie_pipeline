@@ -3,7 +3,7 @@
 import csv
 from pathlib import Path
 
-from mealie_pipeline.pipeline import STAGES
+from mealie_pipeline.pipeline import STAGES, VIDEO_STAGES
 from mealie_pipeline.store import StateStore
 
 STATUSES = ["pending", "running", "done", "failed", "skipped", "review"]
@@ -56,7 +56,7 @@ def write_report(store: StateStore, workspace: Path) -> Path:
             statuses, reason = {}, ""
             verify = (part.verify if part else None) or {}
             for stage in STAGES:
-                kind, key = ("video", video.video_key) if stage == "metadata" else ("part", item_key)
+                kind, key = ("video", video.video_key) if stage in VIDEO_STAGES else ("part", item_key)
                 record = records.get((kind, key, stage))
                 statuses[f"{stage}_status"] = record.status if record else ""
                 if record and record.status in ("failed", "review") and not reason:

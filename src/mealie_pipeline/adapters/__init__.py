@@ -13,6 +13,7 @@ from mealie_pipeline.adapters.mealie import MealieGateway
 from mealie_pipeline.adapters.mealie_http import MealieHttpGateway
 from mealie_pipeline.adapters.system import RealSystemProbe, SystemProbe
 from mealie_pipeline.adapters.video_source import VideoSource, YtDlpVideoSource
+from mealie_pipeline.adapters.web import HttpxWebFetcher, WebFetcher
 from mealie_pipeline.settings import Settings
 
 
@@ -24,6 +25,7 @@ class Adapters:
     videos: VideoSource
     images: ImageDownloader
     engine: IngredientEngine
+    web: WebFetcher
 
 
 def build_adapters(settings: Settings, workspace: Path) -> Adapters:
@@ -45,4 +47,11 @@ def build_adapters(settings: Settings, workspace: Path) -> Adapters:
         videos=YtDlpVideoSource(),
         images=HttpImageDownloader(settings.images.timeout_seconds),
         engine=NlpIngredientEngine(),
+        web=HttpxWebFetcher(
+            workspace / settings.web.cache_dir,
+            user_agent=settings.web.user_agent,
+            min_delay_seconds=settings.web.min_delay_seconds,
+            timeout=settings.web.timeout_seconds,
+            robots_allowlist=tuple(settings.web.robots_allowlist),
+        ),
     )
