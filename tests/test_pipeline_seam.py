@@ -182,7 +182,7 @@ def test_the_store_records_slug_and_link_and_every_stage_done(world: World):
     assert part.slug in world.mealie.recipes
     assert part.mealie_url == f"http://fake-mealie:9000/g/home/r/{part.slug}"
     assert store.stage_status("video", VIDEO_KEY, "metadata") == "done"
-    for stage in ("extract", "parse", "tag", "upload"):
+    for stage in ("extract", "parse", "tag", "verify", "upload"):
         assert store.stage_status("part", ITEM_KEY, stage) == "done"
 
 

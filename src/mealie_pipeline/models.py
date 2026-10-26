@@ -83,3 +83,15 @@ class ParsedIngredient(BaseModel):
     note: str = ""
     food_match: Literal["exact", "plural", "alias", "singular", "fuzzy", "new"] = "exact"
     unit_match: Literal["exact", "plural", "alias", "none", "new"] = "none"
+
+
+class JudgeProblem(BaseModel):
+    severity: Literal["blocker", "major", "minor"]
+    field: str = Field(description="Which part of the recipe: ingredients, steps, times, name, ...")
+    description: str
+
+
+class Judge(BaseModel):
+    """What the independent LLM review answers to "what is missing or wrong?"."""
+
+    problems: list[JudgeProblem] = Field(default_factory=list)
