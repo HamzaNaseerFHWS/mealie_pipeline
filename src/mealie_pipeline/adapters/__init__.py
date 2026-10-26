@@ -11,6 +11,7 @@ from mealie_pipeline.adapters.ingredient_engine import IngredientEngine, NlpIngr
 from mealie_pipeline.adapters.llm import ClaudeCliBackend, LLMBackend
 from mealie_pipeline.adapters.mealie import MealieGateway
 from mealie_pipeline.adapters.mealie_http import MealieHttpGateway
+from mealie_pipeline.adapters.search import ClaudeWebSearch, DdgsSearch, WebSearch
 from mealie_pipeline.adapters.system import RealSystemProbe, SystemProbe
 from mealie_pipeline.adapters.video_source import VideoSource, YtDlpVideoSource
 from mealie_pipeline.adapters.web import HttpxWebFetcher, WebFetcher
@@ -26,6 +27,8 @@ class Adapters:
     images: ImageDownloader
     engine: IngredientEngine
     web: WebFetcher
+    search: WebSearch
+    search_fallback: WebSearch
 
 
 def build_adapters(settings: Settings, workspace: Path) -> Adapters:
@@ -53,5 +56,11 @@ def build_adapters(settings: Settings, workspace: Path) -> Adapters:
             min_delay_seconds=settings.web.min_delay_seconds,
             timeout=settings.web.timeout_seconds,
             robots_allowlist=tuple(settings.web.robots_allowlist),
+        ),
+        search=DdgsSearch(
+            regions=settings.find.regions, min_delay_seconds=settings.find.search_delay_seconds
+        ),
+        search_fallback=ClaudeWebSearch(
+            workspace / "prompts", timeout_seconds=settings.llm.timeout_seconds, models=settings.llm.models
         ),
     )

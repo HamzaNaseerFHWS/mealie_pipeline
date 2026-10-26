@@ -45,11 +45,13 @@ class ClaudeCliBackend:
         models: dict[str, str] | None = None,
         timeout_seconds: float = 600,
         executable: str | None = None,
+        tools: str = "",
     ):
         self.prompts_dir = prompts_dir
         self.models = {**DEFAULT_MODELS, **(models or {})}
         self.timeout_seconds = timeout_seconds
         self.executable = executable
+        self.tools = tools  # `--tools` value: "" for pure text in/out, "WebSearch" for the search fallback
 
     def build_args(self, exe: str, task: str, schema: dict[str, Any], tier: Tier) -> list[str]:
         return [
@@ -59,7 +61,7 @@ class ClaudeCliBackend:
             self.models[tier],
             "--safe-mode",
             "--tools",
-            "",
+            self.tools,
             "--system-prompt-file",
             str(self.prompts_dir / f"{task}.md"),
             "--output-format",

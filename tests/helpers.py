@@ -6,6 +6,7 @@ from mealie_pipeline.adapters import Adapters
 from mealie_pipeline.adapters.downloader import FakeImageDownloader
 from mealie_pipeline.adapters.fake_llm import FakeLLM
 from mealie_pipeline.adapters.fake_mealie import FakeMealie
+from mealie_pipeline.adapters.fake_search import FakeWebSearch
 from mealie_pipeline.adapters.fake_system import FakeSystemProbe
 from mealie_pipeline.adapters.fake_video_source import FakeVideoSource
 from mealie_pipeline.adapters.fake_web import FakeWebFetcher
@@ -21,6 +22,8 @@ def fake_adapters(**overrides: Any) -> Adapters:
         "images": FakeImageDownloader(),
         "engine": FakeIngredientEngine(),
         "web": FakeWebFetcher(),
+        "search": FakeWebSearch(),
+        "search_fallback": FakeWebSearch(),
     }
     parts.update(overrides)
     return Adapters(**parts)

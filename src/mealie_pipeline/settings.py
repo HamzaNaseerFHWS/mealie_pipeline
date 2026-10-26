@@ -47,6 +47,34 @@ class WebSettings(BaseModel):
     fetch_pinned_comment: bool = True
 
 
+class FindSettings(BaseModel):
+    """The `find` stage: turning a recipe name into the right recipe page (ticket 27)."""
+
+    # {name} is the requested name; the sheet's cuisine/notes hint is appended when present.
+    query_templates: dict[str, str] = Field(
+        default_factory=lambda: {
+            "en": "{name} recipe",
+            "de": "{name} Rezept",
+            "ur": "{name} recipe",
+            "hi": "{name} recipe",
+        }
+    )
+    regions: dict[str, str] = Field(
+        default_factory=lambda: {"en": "us-en", "de": "de-de", "ur": "pk-en", "hi": "in-en"}
+    )
+    default_language: str = "en"
+    search_results: int = 10  # hits asked of the search source
+    candidates: int = 5  # pages fetched per name
+    search_delay_seconds: float = 3.0  # between two queries to the same source
+    accept_score: float = 0.75  # the best candidate needs at least this ...
+    accept_lead: float = 0.1  # ... and this much lead over the runner-up, else the user chooses
+    min_name_similarity: float = 0.35  # a page whose recipe name is less alike than this is no candidate
+    weights: dict[str, float] = Field(
+        default_factory=lambda: {"name": 0.5, "structure": 0.15, "completeness": 0.2, "language": 0.15}
+    )
+    use_claude_fallback: bool = True
+
+
 class VerifySettings(BaseModel):
     """The Gate: thresholds and weights for the Quality Score (0-100)."""
 
@@ -74,6 +102,7 @@ class Settings(BaseModel):
     llm: LlmSettings = Field(default_factory=LlmSettings)
     images: ImageSettings = Field(default_factory=ImageSettings)
     web: WebSettings = Field(default_factory=WebSettings)
+    find: FindSettings = Field(default_factory=FindSettings)
     mealie_url: str | None = None
     mealie_token: SecretStr | None = None
     openai_api_key: SecretStr | None = None
@@ -86,7 +115,7 @@ class Settings(BaseModel):
 
 
 SECRET_FIELDS = {"mealie_url", "mealie_token", "openai_api_key", "openai_max_usd"}
-NESTED_SECTIONS = {"mealie", "llm", "images", "verify", "web"}
+NESTED_SECTIONS = {"mealie", "llm", "images", "verify", "web", "find"}
 
 
 def _apply_overrides(data: dict[str, Any], overrides: Mapping[str, str | None]) -> None:

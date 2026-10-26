@@ -1,0 +1,22 @@
+[
+  {
+    "title": "Authentic Chicken Karahi Recipe",
+    "href": "https://www.example-kitchen.com/chicken-karahi/",
+    "body": "A Pakistani classic with tomatoes, ginger and green chillies."
+  },
+  {
+    "title": "Chicken Karahi - Pinterest",
+    "href": "https://www.pinterest.com/pin/12345/",
+    "body": "Save this pin."
+  },
+  {
+    "title": "Chicken Karahi (Video)",
+    "href": "https://www.youtube.com/watch?v=abc",
+    "body": "Watch how to make it."
+  },
+  {
+    "title": "No link here",
+    "href": "",
+    "body": ""
+  }
+]
