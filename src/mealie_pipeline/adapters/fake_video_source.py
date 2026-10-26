@@ -7,8 +7,9 @@ from mealie_pipeline.models import VideoMeta
 
 
 class FakeVideoSource:
-    def __init__(self, infos: dict[str, dict[str, Any]] | None = None):
+    def __init__(self, infos: dict[str, dict[str, Any]] | None = None, pinned: dict[str, str] | None = None):
         self.infos = infos or {}
+        self.pinned = pinned or {}
         self.calls: list[str] = []
 
     def metadata(self, url: str) -> VideoMeta:
@@ -16,3 +17,6 @@ class FakeVideoSource:
         if url not in self.infos:
             raise VideoSourceError(f"FakeVideoSource has no info for {url}")
         return meta_from_info(self.infos[url])
+
+    def pinned_comments(self, url: str) -> str:
+        return self.pinned.get(url, "")

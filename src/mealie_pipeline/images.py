@@ -19,12 +19,16 @@ class PickedImage:
     extension: str
 
 
-def candidate_urls(platform: str, video_id: str, thumbnail: str | None) -> list[str]:
-    """Image URLs to try, best first."""
+def candidate_urls(
+    platform: str, video_id: str, thumbnail: str | None, preferred: str | None = None
+) -> list[str]:
+    """Image URLs to try, best first. A Recipe Website's own image (`preferred`) beats the thumbnail."""
     if platform == "youtube":
         base = f"https://i.ytimg.com/vi/{video_id}"
-        return [f"{base}/maxresdefault.jpg", f"{base}/hqdefault.jpg"]
-    return [thumbnail] if thumbnail else []
+        urls = [f"{base}/maxresdefault.jpg", f"{base}/hqdefault.jpg"]
+    else:
+        urls = [thumbnail] if thumbnail else []
+    return [preferred, *urls] if preferred else urls
 
 
 def image_info(data: bytes) -> tuple[str, int | None] | None:

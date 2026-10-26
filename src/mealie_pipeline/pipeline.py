@@ -27,14 +27,40 @@ from mealie_pipeline.images import attach_image, candidate_urls
 from mealie_pipeline.matching import FoodMatcher, UnitNormalizer
 from mealie_pipeline.models import ExtractedRecipe, Judge, ParsedIngredient, VideoMeta, extraction_schema
 from mealie_pipeline.payload import build_payload
+from mealie_pipeline.recipe_extraction import format_for_prompt as web_text
 from mealie_pipeline.review import write_review_file
 from mealie_pipeline.scoring import apply_judge, decide
+from mealie_pipeline.scrape import WebResult, find_web_recipe
 from mealie_pipeline.settings import Settings
 from mealie_pipeline.store import StateStore, Status
 from mealie_pipeline.verify import Evaluation, evaluate
 
-STAGES = ["metadata", "linkcheck", "extract", "parse", "tag", "verify", "upload"]
+STAGES = ["metadata", "linkcheck", "scrape", "extract", "parse", "tag", "verify", "upload"]
+# Stages that run once per Video; the rest run per Recipe Part.
+VIDEO_STAGES = {"metadata", "scrape"}
+# The stage that must be done first for the same entity. Recipe Parts exist only once their Video's
+# metadata is done, so `linkcheck` has no prerequisite. `scrape` (per Video) waits for a Part's
+# `linkcheck`, and `extract` waits for its Part's `linkcheck` and its Video's `scrape`.
+PREREQUISITE: dict[str, str | None] = {
+    "metadata": None,
+    "linkcheck": None,
+    "scrape": "metadata",
+    "extract": "linkcheck",
+    "parse": "extract",
+    "tag": "parse",
+    "verify": "tag",
+    "upload": "verify",
+}
 MAX_TAGS = 6
+WEB_STRUCTURED_RULE = (
+    "The [SRC:web] block is the creator's own written recipe. Keep the website's quantities and wording "
+    "and only fill gaps (missing times or servings) and merge in useful tips from the video description; "
+    "do not rewrite or reinterpret it."
+)
+WEB_TEXT_RULE = (
+    "The [SRC:web] block is unstructured text from the creator's website. Extract the recipe from it as "
+    "you would from a description, preferring it over the video description when they differ."
+)
 TO_TASTE = "to taste"
 
 
@@ -78,6 +104,10 @@ class Pipeline:
         synonyms = yaml.safe_load(units.read_text(encoding="utf-8")) if units.is_file() else {}
         self.units = UnitNormalizer(synonyms or {})
         self.foods = FoodMatcher()
+        selectors = workspace / "config" / "site_selectors.yaml"
+        self.selectors: dict[str, dict[str, str]] = (
+            yaml.safe_load(selectors.read_text(encoding="utf-8")) if selectors.is_file() else {}
+        ) or {}
 
     # -- public ---------------------------------------------------------------------------
 
@@ -106,18 +136,18 @@ class Pipeline:
         handlers: dict[str, Callable[[str, RunReport, bool], None]] = {
             "metadata": self._metadata,
             "linkcheck": self._linkcheck,
+            "scrape": self._scrape,
             "extract": self._extract,
             "parse": self._parse,
             "tag": self._tag,
             "verify": self._verify,
             "upload": self._upload,
         }
-        for index, stage in enumerate(STAGES):
+        for stage in STAGES:
             if stage not in wanted:
                 continue
-            kind = "video" if stage == "metadata" else "part"
-            # Parts exist only once their Video's metadata is done: `extract` has no part-level prerequisite.
-            previous = STAGES[index - 1] if index > 1 else None
+            kind = "video" if stage in VIDEO_STAGES else "part"
+            previous = PREREQUISITE[stage]
             # In a dry run nothing past `extract` is recorded, so the later stages preview instead.
             if dry_run and stage in ("parse", "tag", "verify", "upload"):
                 if stage == "upload":
@@ -125,7 +155,21 @@ class Pipeline:
                 continue
             if stage in ("linkcheck", "upload"):
                 self._links = None  # one fresh listing of Mealie per batch
-            for key in self.store.next_batch(kind, stage, previous, limit):
+            batch = self.store.next_batch(kind, stage, previous)
+            if stage == "scrape":  # only Videos that still have a Part to import (not already in Mealie)
+                wanted_videos = {
+                    p.video_key
+                    for p in self.store.parts()
+                    if self.store.stage_status("part", p.item_key, "linkcheck") == "done"
+                }
+                batch = [key for key in batch if key in wanted_videos]
+            if stage == "extract":  # wait for the Video's recipe website (`scrape`)
+                batch = [
+                    key
+                    for key in batch
+                    if self.store.stage_status("video", self.store.part(key).video_key, "scrape") == "done"
+                ]
+            for key in batch[:limit] if limit is not None else batch:
                 if should_stop():
                     report.stopped = (
                         "Interrupted: finished the current item and stopped. Run again to continue."
@@ -173,6 +217,41 @@ class Pipeline:
         meta = self.a.videos.metadata(video.canonical_url)
         self.store.set_metadata(video_key, meta.model_dump())
         self.store.ensure_part(video_key, 1, 1)
+
+    def _web_path(self, video_key: str) -> Path:
+        video = self.store.video(video_key)
+        return self.workspace / "data" / video.platform / video.video_id / "web.json"
+
+    def _web(self, video_key: str) -> WebResult | None:
+        """The Recipe Website result stored by `scrape`, if it found a usable recipe."""
+        path = self._web_path(video_key)
+        if not path.is_file():
+            return None
+        result = WebResult.model_validate_json(path.read_text(encoding="utf-8"))
+        return result if result.usable else None
+
+    def _scrape(self, video_key: str, report: RunReport, dry_run: bool) -> None:
+        video = self.store.video(video_key)
+        meta = VideoMeta.model_validate(video.metadata)
+        web = self.settings.web
+        comment = self.a.videos.pinned_comments(video.canonical_url) if web.fetch_pinned_comment else ""
+        result = find_web_recipe(
+            title=meta.title,
+            description=meta.description,
+            pinned_comment=comment,
+            fetcher=self.a.web,
+            selectors=self.selectors,
+            max_pages=web.max_pages,
+        )
+        path = self._web_path(video_key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(result.model_dump_json(indent=1), encoding="utf-8")
+        if result.usable and result.recipe:
+            self._detail[video_key] = f"{result.recipe.extraction_method} {result.final_url}"
+        else:
+            self._detail[video_key] = f"no website recipe ({result.reason})"
+            if result.reason in ("needs_browser", "robots", "error"):
+                report.warnings.append(f"{video_key}: recipe page not read ({result.reason})")
 
     def _link_set(self) -> dict[str, str]:
         """The Existing Link Set: `key -> slug` for every recipe in Mealie that has an `orgURL`."""
@@ -223,14 +302,19 @@ class Pipeline:
         part = self.store.part(item_key)
         video = self.store.video(part.video_key)
         meta = VideoMeta.model_validate(video.metadata)
-        if not meta.description.strip():
-            raise StageFailure("the video has no description to extract a recipe from")
+        web = self._web(part.video_key)
+        if not meta.description.strip() and web is None:
+            raise StageFailure("the video has no description or website recipe to extract from")
         tags = sorted(t.name for t in self.catalog.tags)
         prompt = (
             f"Title: {meta.title}\nUploader: {meta.uploader}\nURL: {video.canonical_url}\n\n"
             f"Allowed tag names: {json.dumps(tags, ensure_ascii=False)}\n\n"
-            f"[SRC:desc]\n{meta.description}\n[/SRC]\n"
         )
+        if web is not None and web.recipe is not None:
+            rule = WEB_STRUCTURED_RULE if web.recipe.structured else WEB_TEXT_RULE
+            prompt += f"[SRC:web]\n{web_text(web.recipe)}\n[/SRC]\n\n{rule}\n\n"
+        if meta.description.strip():
+            prompt += f"[SRC:desc]\n{meta.description}\n[/SRC]\n"
         if findings:
             prompt += (
                 "\nYour previous extraction of this video failed verification. Fix these problems, "
@@ -239,7 +323,9 @@ class Pipeline:
         raw = self.a.llm.complete("extract", prompt, extraction_schema(tags), tier)
         recipe = ExtractedRecipe.model_validate(raw)
         if not recipe.is_recipe:
-            raise StageFailure("the description does not contain a recipe")
+            raise StageFailure(
+                f"the {'description and website page' if web else 'description'} does not contain a recipe"
+            )
         if not recipe.ingredients or not recipe.instructions:
             raise StageFailure("the extraction has no ingredients or no steps")
         self.store.update_part(item_key, extracted=recipe.model_dump())
@@ -256,8 +342,11 @@ class Pipeline:
         self.store.update_part(item_key, tags=tags)
 
     def _sources(self, video_key: str) -> dict[str, str]:
-        """The Sources the Evidence may cite. Only the description exists so far."""
+        """The Sources the Evidence may cite: the website recipe (`web`) and the description (`desc`)."""
         meta = VideoMeta.model_validate(self.store.video(video_key).metadata)
+        web = self._web(video_key)
+        if web is not None and web.recipe is not None:
+            return {"web": web_text(web.recipe), "desc": meta.description}
         return {"desc": meta.description}
 
     def _evaluate(self, item_key: str) -> Evaluation:
@@ -377,7 +466,9 @@ class Pipeline:
         mealie.patch_recipe(slug, payload)
 
         meta = VideoMeta.model_validate(video.metadata)
-        urls = candidate_urls(video.platform, video.video_id, meta.thumbnail)
+        web = self._web(part.video_key)
+        website_image = web.recipe.image if web and web.recipe else None
+        urls = candidate_urls(video.platform, video.video_id, meta.thumbnail, website_image)
         outcome = attach_image(mealie, slug, urls, self.a.images, self.workspace / "work" / "images")
         warnings = ["image_missing"] if outcome == "missing" else []
 
