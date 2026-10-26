@@ -1,0 +1,121 @@
+{
+  "is_recipe": true,
+  "name": "Chatpata Bhindi Aloo",
+  "description": "Crispy, spicy okra stir-fry.",
+  "language": "en",
+  "servings": 4,
+  "yield_text": "3-4 servings",
+  "prep_minutes": 10,
+  "cook_minutes": 20,
+  "total_minutes": 30,
+  "ingredients": [
+    {
+      "line": "250 g okra",
+      "original_line": "250 g okra (bhindi)",
+      "section": null,
+      "quantity_stated": true,
+      "evidence": [
+        {
+          "source": "desc",
+          "quote": "250 g okra (bhindi)"
+        }
+      ]
+    },
+    {
+      "line": "2 small onions",
+      "original_line": "2 small onions",
+      "section": null,
+      "quantity_stated": true,
+      "evidence": [
+        {
+          "source": "desc",
+          "quote": "2 small onions"
+        }
+      ]
+    },
+    {
+      "line": "2 tbsp mustard oil",
+      "original_line": "2 tbsp mustard oil",
+      "section": null,
+      "quantity_stated": true,
+      "evidence": [
+        {
+          "source": "desc",
+          "quote": "2 tbsp mustard oil"
+        }
+      ]
+    },
+    {
+      "line": "1/2 tsp cumin seeds",
+      "original_line": "1/2 tsp cumin seeds",
+      "section": null,
+      "quantity_stated": true,
+      "evidence": [
+        {
+          "source": "desc",
+          "quote": "1/2 tsp cumin seeds"
+        }
+      ]
+    },
+    {
+      "line": "salt, to taste",
+      "original_line": "Salt, to taste",
+      "section": null,
+      "quantity_stated": false,
+      "evidence": [
+        {
+          "source": "desc",
+          "quote": "Salt, to taste"
+        }
+      ]
+    }
+  ],
+  "instructions": [
+    {
+      "section": null,
+      "text": "Wash the okra, dry it well and cut into thick dice.",
+      "evidence": [
+        {
+          "source": "desc",
+          "quote": "Wash the okra, dry it well and cut into thick dice."
+        }
+      ]
+    },
+    {
+      "section": null,
+      "text": "Heat the oil in a kadhai, add the cumin seeds and sliced onions and cook until translucent.",
+      "evidence": [
+        {
+          "source": "desc",
+          "quote": "Heat the oil in a kadhai, add the cumin seeds and the sliced onions and cook until translucent."
+        }
+      ]
+    },
+    {
+      "section": null,
+      "text": "Add the okra and cook covered on low heat until tender. Season with salt and serve.",
+      "evidence": [
+        {
+          "source": "desc",
+          "quote": "Add the okra and cook covered on low heat until tender. Season with salt and serve."
+        }
+      ]
+    }
+  ],
+  "notes": [],
+  "tag_choices": [
+    {
+      "tag": "dinner",
+      "reason": "main dish"
+    },
+    {
+      "tag": "Vegan",
+      "reason": "no animal products"
+    },
+    {
+      "tag": "Made Up Tag",
+      "reason": "does not exist"
+    }
+  ],
+  "missing_info": []
+}

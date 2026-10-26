@@ -1,0 +1,22 @@
+# Unit synonyms -> the Mealie unit name they should map to (ticket 02, Unit Normalizer).
+# Keys are canonical Mealie unit names; values are spellings found in recipes (any case, plurals handled).
+# If your Mealie has no unit of that name, the pipeline creates it (and logs it in reports/created_units.csv).
+gram: [g, gr, gm, gms, grams, gramme, grammes]
+kilogram: [kg, kgs, kilo, kilos, kilograms]
+milligram: [mg]
+milliliter: [ml, mls, millilitre, millilitres, milliliters, cc]
+liter: [l, litre, litres, liters, ltr]
+teaspoon: [tsp, tsps, t, teaspoons, tl, teelöffel]
+tablespoon: [tbsp, tbsps, tbs, tbl, tablespoons, el, esslöffel]
+cup: [cups, c, tasse, tassen]
+ounce: [oz, ounces]
+pound: [lb, lbs, pounds]
+pinch: [pinches, prise, prisen]
+dash: [dashes]
+handful: [handfuls]
+clove: [cloves, zehe, zehen]
+slice: [slices]
+piece: [pieces, pc, pcs, stück]
+bunch: [bunches]
+can: [cans, tin, tins]
+sprig: [sprigs]

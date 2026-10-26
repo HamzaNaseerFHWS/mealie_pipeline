@@ -31,6 +31,7 @@ class Food(BaseModel):
     id: str
     name: str
     plural_name: str = ""
+    aliases: list[str] = Field(default_factory=list)
 
 
 class Unit(BaseModel):

@@ -21,8 +21,20 @@ class MealieSettings(BaseModel):
     backoff_seconds: float = 1.0
 
 
+class LlmSettings(BaseModel):
+    timeout_seconds: float = 600
+    # Overrides of the tier -> `claude --model` alias map: {"fast": "haiku", "strong": "sonnet", ...}.
+    models: dict[str, str] = Field(default_factory=dict)
+
+
+class ImageSettings(BaseModel):
+    timeout_seconds: float = 20
+
+
 class Settings(BaseModel):
     mealie: MealieSettings = Field(default_factory=MealieSettings)
+    llm: LlmSettings = Field(default_factory=LlmSettings)
+    images: ImageSettings = Field(default_factory=ImageSettings)
     mealie_url: str | None = None
     mealie_token: SecretStr | None = None
     openai_api_key: SecretStr | None = None
@@ -35,7 +47,7 @@ class Settings(BaseModel):
 
 
 SECRET_FIELDS = {"mealie_url", "mealie_token", "openai_api_key", "openai_max_usd"}
-NESTED_SECTIONS = {"mealie"}
+NESTED_SECTIONS = {"mealie", "llm", "images"}
 
 
 def _apply_overrides(data: dict[str, Any], overrides: Mapping[str, str | None]) -> None:

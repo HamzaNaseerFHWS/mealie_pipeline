@@ -9,3 +9,16 @@ mealie:
   max_retries: 3
   # First backoff delay in seconds; doubles on every retry (1, 2, 4).
   backoff_seconds: 1.0
+
+llm:
+  # Seconds to wait for one `claude -p` call.
+  timeout_seconds: 600
+  # Which `claude --model` alias each tier uses. Uncomment to override the defaults.
+  # models:
+  #   fast: haiku
+  #   strong: sonnet
+  #   strongest: opus
+
+images:
+  # Seconds to wait when downloading a thumbnail.
+  timeout_seconds: 20

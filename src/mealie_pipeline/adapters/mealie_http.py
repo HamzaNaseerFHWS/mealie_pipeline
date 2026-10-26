@@ -89,7 +89,12 @@ class MealieHttpGateway:
                 Tag(id=t["id"], name=t["name"], slug=t["slug"]) for t in self._items("/api/organizers/tags")
             ],
             foods=[
-                Food(id=f["id"], name=f["name"], plural_name=f.get("pluralName") or "")
+                Food(
+                    id=f["id"],
+                    name=f["name"],
+                    plural_name=f.get("pluralName") or "",
+                    aliases=[a["name"] for a in f.get("aliases") or [] if a.get("name")],
+                )
                 for f in self._items("/api/foods")
             ],
             units=[
