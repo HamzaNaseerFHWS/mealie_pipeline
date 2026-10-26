@@ -33,4 +33,4 @@
 - [ ] `mp run` processes requests alongside Videos. `--limit`, `--dry-run` and `--stages` work for them, and `mp requests` shows final counts.
 - [ ] `reports/requests.csv` is complete and opens correctly in Excel.
 
-**Manual check on the laptop (user):** `uv run mp run --limit 5 --dry-run` and look at the payloads in `work/`. Then run without `--dry-run` and open the recipes in Mealie.
+**Manual check on the laptop (user):** first finish wayfinder ticket 13 (Mealie token + `check_mealie.py --write-test`). Then run `uv run mp run --limit 5 --dry-run` and look at the payloads in `work/`. Then run without `--dry-run` and open the recipes in Mealie.

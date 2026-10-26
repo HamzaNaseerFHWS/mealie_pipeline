@@ -36,6 +36,9 @@ Turns saved cooking videos (YouTube playlists, Instagram saved "All posts", Face
 
 ### After that
 
+**Follow `.scratch/video-recipe-pipeline/ORDER.md`.** Phase A gets your CSV/Excel list of recipe names into Mealie first: 01 → 02 → 03 → 26 → 06 → 27 → 08 → 22 → 28. Then Phase B improves those recipes, and Phase C builds the social-media pipeline. The graph below shows the blocking edges; ORDER.md decides the order among the tickets the graph allows.
+
+
 Always start the lowest-numbered ticket whose blockers are finished (`done` for implementation tickets, `resolved` for wayfinder tickets), **one ticket per fresh session**. The dependency graph:
 
 ```
@@ -47,7 +50,7 @@ Always start the lowest-numbered ticket whose blockers are finished (`done` for 
          │      ├─ 07 (W17) ── 11 (also 09)
          │      └─ 13 (W18)
          └─ 08 ─ 09 ─ 10
-22 (skip recipes already in Mealie): after 03, 04. Needed before 18, 19, 21
+22 (skip recipes already in Mealie): after 03 (builds the URL Normalizer if 04 hasn't). Needed before 18, 19, 21, 28
 25 (protein tags on every recipe): after 01. Ticket 10 also waits for it. `--apply` waits for W20
 26 (CSV/Excel of recipe names → Recipe Requests): after 03
 27 (find each name's recipe page on the web): after 26, 06 (W21 resolved: ddgs + Claude WebSearch fallback)

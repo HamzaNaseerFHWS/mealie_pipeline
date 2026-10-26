@@ -213,6 +213,8 @@ There is no existing test prior art in the repo yet. Ticket 01 establishes the c
 
 ## Further Notes
 
+- **Build order:** `.scratch/video-recipe-pipeline/ORDER.md`. The Recipe Requests path (module 18, tickets 26–28) is built **first** (Phase A), so the user's list of recipe names is in Mealie for meal planning before the social-media pipeline exists. Ticket 22 builds the URL Normalizer when it comes before ticket 04.
+
 - Agents usually can't reach the Mealie PC, Chrome logins or the GPU. Every ticket lists **manual verification steps** for the user on the laptop, and the HITL tickets (`ready-for-human`) cover first-run setup and calibration.
 - Open wayfinder tickets gate specific implementation tickets: Instagram enumeration (15) gates the Instagram collector, Facebook enumeration (16) gates the Facebook collector, Whisper on Windows (17) gates transcription, `claude -p` on Windows and limits (18) gates the usage governor, the Mealie check (13) and the pilot list (14) gate the first real run, and run defaults (19) gate the full run. The Auto Sync defaults (schedule, per-platform check interval, cap per cycle, notifications) are confirmed in wayfinder 19 questions 7–10 before the schedule is switched on (ticket 24's hand-off).
 - Auto Sync (tickets 23 and 24) is built after the full run (21). It's the steady state: the full run clears the backlog, then scheduled cycles keep Mealie current.
