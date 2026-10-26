@@ -11,7 +11,7 @@ One Video failing never stops the others. Ctrl+C finishes the current entity and
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `spec.md` modules 1, 2, 15 and the CLI surface.
 
