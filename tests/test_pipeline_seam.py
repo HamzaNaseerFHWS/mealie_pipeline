@@ -314,7 +314,7 @@ def test_upload_fails_the_item_when_the_read_back_differs(world: World):
 
 def test_a_recipe_already_in_mealie_under_the_item_key_is_recorded_not_duplicated(world: World):
     world.invoke("add", URL)
-    world.invoke("run", "--stages", "metadata,extract,parse,tag")
+    world.invoke("run", "--stages", "metadata,linkcheck,scrape,extract,parse,tag")
     slug = world.mealie.create_recipe("Chatpata Bhindi Aloo")
     world.mealie.patch_recipe(
         slug, {"extras": {"item_key": ITEM_KEY}, "recipeIngredient": [{"quantity": 1, "note": "x"}]}

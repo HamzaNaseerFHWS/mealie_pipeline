@@ -42,3 +42,11 @@ verify:
   #   S5: 10   # quantity sanity (needs ticket 09)
   #   S6: 15   # plausible times and servings
   # judge_penalties: {blocker: 30, major: 15, minor: 5}
+
+web:
+  # Recipe Website fetching (the `scrape` stage). Pages are cached under data/web_cache.
+  min_delay_seconds: 2      # wait at least this long between requests to one domain
+  timeout_seconds: 20
+  max_pages: 3              # candidate links tried per Video
+  fetch_pinned_comment: true   # also look for the recipe link in the creator's pinned comment
+  robots_allowlist: []      # domains whose robots.txt is not consulted, e.g. your own site

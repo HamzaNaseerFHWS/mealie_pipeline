@@ -31,6 +31,22 @@ class ImageSettings(BaseModel):
     timeout_seconds: float = 20
 
 
+class WebSettings(BaseModel):
+    """Recipe Website fetching (the `scrape` stage)."""
+
+    user_agent: str = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/126.0.0.0 Safari/537.36"
+    )
+    min_delay_seconds: float = 2.0  # per domain
+    timeout_seconds: float = 20
+    cache_dir: str = "data/web_cache"
+    # Domains whose robots.txt is not consulted (your own sites).
+    robots_allowlist: list[str] = Field(default_factory=list)
+    max_pages: int = 3  # candidate links tried per Video
+    fetch_pinned_comment: bool = True
+
+
 class VerifySettings(BaseModel):
     """The Gate: thresholds and weights for the Quality Score (0-100)."""
 
@@ -57,6 +73,7 @@ class Settings(BaseModel):
     verify: VerifySettings = Field(default_factory=VerifySettings)
     llm: LlmSettings = Field(default_factory=LlmSettings)
     images: ImageSettings = Field(default_factory=ImageSettings)
+    web: WebSettings = Field(default_factory=WebSettings)
     mealie_url: str | None = None
     mealie_token: SecretStr | None = None
     openai_api_key: SecretStr | None = None
@@ -69,7 +86,7 @@ class Settings(BaseModel):
 
 
 SECRET_FIELDS = {"mealie_url", "mealie_token", "openai_api_key", "openai_max_usd"}
-NESTED_SECTIONS = {"mealie", "llm", "images", "verify"}
+NESTED_SECTIONS = {"mealie", "llm", "images", "verify", "web"}
 
 
 def _apply_overrides(data: dict[str, Any], overrides: Mapping[str, str | None]) -> None:

@@ -114,7 +114,7 @@ def test_a_recipe_with_the_same_name_but_no_link_is_not_matched(world: World):
 
 def test_the_link_is_checked_again_right_before_upload(world: World):
     world.invoke("add", URL)
-    first = world.invoke("run", "--stages", "metadata,linkcheck,extract,parse,tag,verify")
+    first = world.invoke("run", "--stages", "metadata,linkcheck,scrape,extract,parse,tag,verify")
     assert first.exit_code == 0, first.output
     assert len(world.llm.calls) == 1 and world.mealie.recipes == {}
     slug = old_import(world)  # it appears in Mealie after extraction, before upload
@@ -131,7 +131,7 @@ def test_the_link_is_checked_again_right_before_upload(world: World):
 
 def test_the_pre_upload_check_lists_mealie_once_per_batch(world: World):
     world.invoke("add", URL)
-    world.invoke("run", "--stages", "metadata,linkcheck,extract,parse,tag,verify")
+    world.invoke("run", "--stages", "metadata,linkcheck,scrape,extract,parse,tag,verify")
     calls = []
     original = world.mealie.list_recipe_summaries
     world.mealie.list_recipe_summaries = lambda: (calls.append(1), original())[1]  # type: ignore[method-assign]

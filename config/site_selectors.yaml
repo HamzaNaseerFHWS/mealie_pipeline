@@ -1,0 +1,33 @@
+# Recipe-card plugins whose HTML is read when a page has no usable JSON-LD / microdata (ticket 06).
+# Selectors are CSS (selectolax). Only `container`, `ingredient` and `step` are required.
+#   container:      the whole recipe card
+#   name:           the recipe title inside the card
+#   ingredient_group / group_title: an ingredient section ("For the sauce") and its heading
+#   ingredient:     one ingredient line
+#   step_group / step_group_title / step: the same for the method
+#   yield / image:  optional extras
+wprm:
+  container: ".wprm-recipe-container, .wprm-recipe"
+  name: ".wprm-recipe-name"
+  ingredient_group: ".wprm-recipe-ingredient-group"
+  group_title: ".wprm-recipe-group-name"
+  ingredient: ".wprm-recipe-ingredient"
+  step_group: ".wprm-recipe-instruction-group"
+  step_group_title: ".wprm-recipe-group-name"
+  step: ".wprm-recipe-instruction-text"
+  yield: ".wprm-recipe-servings"
+  image: ".wprm-recipe-image img"
+tasty:
+  container: ".tasty-recipes"
+  name: ".tasty-recipes-title"
+  ingredient: ".tasty-recipes-ingredients li"
+  step: ".tasty-recipes-instructions li"
+  yield: ".tasty-recipes-yield"
+  image: ".tasty-recipes-image img"
+mediavine:
+  container: ".mv-create-wrapper"
+  name: ".mv-create-title-primary"
+  ingredient: ".mv-create-ingredients li"
+  step: ".mv-create-instructions li"
+  yield: ".mv-create-time-yield .mv-create-time-format"
+  image: ".mv-create-image img"

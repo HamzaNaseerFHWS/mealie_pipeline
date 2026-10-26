@@ -109,3 +109,7 @@ uv run mp run --upgrade-existing                        # opt-in: PATCH an old i
 ```
 
 `--upgrade-existing` replaces the old recipe's ingredients and steps with the parsed ones, adds the pipeline's tags to its own and merges `extras`. Its name, image, rating, comments and dates are left alone. Without the flag, recipes the pipeline did not create are never written to. `mp status` and the run summary show the `already_in_mealie` and `upgraded_existing` counts.
+
+## Recipe websites (`scrape` stage)
+
+When a Video's description or the creator's pinned comment links to a recipe page, `mp run` reads that page and gives the recipe to `extract` as the top-priority `[SRC:web]` Source (the website's exact quantities win; the description only fills gaps). Short links (`bit.ly`, `tinyurl`, `geni.us`, ...) are expanded; social, shop and affiliate links are ignored. The website's own image is preferred as the recipe image. Pages are fetched politely (real browser User-Agent, `robots.txt` honoured except for `web.robots_allowlist`, at least 2 s per domain) and cached in `data/web_cache/`; what was found is kept in `data/youtube/<id>/web.json`. A page that blocks plain requests (403/429 or a challenge page) is recorded as `needs_browser` and the Video still imports from its description. Recipe-card selectors (WPRM, Tasty, Mediavine) live in `config/site_selectors.yaml`; fetch settings are under `web:` in `config/settings.yaml`.
