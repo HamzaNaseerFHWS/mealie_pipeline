@@ -142,10 +142,15 @@ def _loads(text: str | None) -> Any:
     return json.loads(text) if text else None
 
 
+BUSY_TIMEOUT_SECONDS = 60
+
+
 class StateStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(path)
+        # WAL + a long lock wait: `mp run --stages find` and an import run may share the file.
+        self._db = sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS)
+        self._db.execute("PRAGMA journal_mode=WAL")
         self._db.row_factory = sqlite3.Row
         self._migrate()
 
