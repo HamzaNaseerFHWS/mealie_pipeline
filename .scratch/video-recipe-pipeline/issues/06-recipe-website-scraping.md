@@ -11,7 +11,7 @@ The result becomes the top-priority `web` Source for extraction. The extraction 
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `spec.md` modules 3 (`WebFetcher`) and 6; `PIPELINE_SPEC.md` §4.2–4.3.
 
