@@ -47,6 +47,10 @@ _Avoid_: hallucination check
 
 ## Recipes
 
+**Recipe Request**:
+One row of a user's CSV/Excel sheet of recipe names: "find this recipe on the web and add it to Mealie". It becomes one Recipe Part with Item Key `web:<url hash>#1` once its page is found.
+_Avoid_: wish, row, lookup
+
 **Recipe Part**:
 One recipe inside a Video. Every Video has one or more; a Video with several recipes has several independent Recipe Parts, keyed `platform:video_id#n`.
 _Avoid_: sub-recipe (that is a section inside one recipe), segment

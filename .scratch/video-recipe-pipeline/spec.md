@@ -106,6 +106,14 @@ A command-line pipeline (`mp`) that runs on the user's Windows laptop. The user 
 62. As the user, I want two cycles never to run at the same time, even if one runs long, so that nothing is processed or uploaded twice.
 63. As the user, I want unsaving a Video or removing it from a playlist to leave its Mealie recipe alone, so that cleaning up my saves never deletes recipes.
 
+### Recipe Requests (one-off list of names)
+
+64. As the user, I want to give the pipeline a CSV or Excel sheet of recipe names, so that recipes I know by name (not by Video) end up in Mealie too.
+65. As the user, I want each name searched on the web without needing a search account, and the right single-recipe page picked, so that I don't have to find the pages myself.
+66. As the user, I want to be asked to pick from the top 3 pages when the pipeline isn't sure, so that wrong recipes don't get imported.
+67. As the user, I want found recipes parsed, tagged, verified and uploaded like any other, and recipes already in Mealie skipped by their link, so that the result matches the rest of my collection.
+68. As the user, I want a results sheet with each row's status and Mealie link, so that I can see which names became recipes.
+
 ## Implementation Decisions
 
 ### Platform and tooling
@@ -167,9 +175,11 @@ A command-line pipeline (`mp`) that runs on the user's Windows laptop. The user 
    - **Summary:** every cycle writes `reports/auto/<timestamp>.md`, which lists the lists synced or skipped, new Videos, uploaded recipes with Mealie links, Review Queue additions, and problems that need the user. It also appends one row to `reports/auto/history.csv`. A `Notifier` port (real: Windows toast; fake: records messages) is called only when something needs the user (a login, a Mealie outage of 2 or more cycles in a row, a new Review Queue item) or when recipes were uploaded (setting `auto.notify_on_upload`, default on).
    - **Scheduling** (`mp schedule install|remove|status`) registers one Windows Task Scheduler task. It is created with `schtasks.exe` from an argument list, and it runs `uv run mp auto --workspace <ws>` at `auto.schedule` (default every 6 h). It uses "run only when the user is logged on" (Chrome profile, Claude CLI login and Tailscale are per-user), "start when available" (catch up after sleep), "do not start a new instance", and no wake-from-sleep. The task XML/arguments are built by a pure function and table-tested. Calling `schtasks.exe` is a thin adapter (`Scheduler` port, with a fake).
 
+18. **Recipe Requests** (tickets 26–28, one-off): a Recipe Request is a row from a user's CSV/XLSX of recipe names, stored in the State Store with its status. A `find` stage searches through a `WebSearch` port (primary `ddgs`, no key; fallback `claude -p --tools "WebSearch"`; decided in wayfinder 21), fetches up to 5 candidates with the `WebFetcher`, keeps only pages that yield one real recipe, scores them (pure), and either accepts the best, asks the user to pick from the top 3 (`reports/request_choices.csv`), or marks `not_found`. A found request becomes one Recipe Part with Item Key `web:<url hash>#1` and runs `extract → parse → tag → verify → upload` with the page as its only (`web`) Source. The Existing Link Set (ticket 22) is checked with the page URL before any AI work. Results go to `reports/requests.csv`.
+
 ### CLI surface
 
-`mp doctor`, `mp login <platform>`, `mp lists add <url>` / `mp lists` / `mp sync [--list]`, `mp add <url…> | --file <path>`, `mp run [--stages a,b] [--limit N] [--window HH:MM-HH:MM] [--dry-run] [--mode skip|update] [--allow-openai]`, `mp status`, `mp review classify`, `mp retry <item_key|video_key> [--stage]`, `mp reset <stage> [--failed-only]`, `mp report`, `mp bench-whisper [--samples dir]`, `mp auto [--dry-run] [--force-sync]` (one Auto Sync Cycle; `--force-sync` ignores `check_every`), `mp schedule install|remove|status`.
+`mp doctor`, `mp login <platform>`, `mp lists add <url>` / `mp lists` / `mp sync [--list]`, `mp add <url…> | --file <path>`, `mp run [--stages a,b] [--limit N] [--window HH:MM-HH:MM] [--dry-run] [--mode skip|update] [--allow-openai]`, `mp status`, `mp review classify`, `mp retry <item_key|video_key> [--stage]`, `mp reset <stage> [--failed-only]`, `mp report`, `mp bench-whisper [--samples dir]`, `mp auto [--dry-run] [--force-sync]` (one Auto Sync Cycle; `--force-sync` ignores `check_every`), `mp schedule install|remove|status`, `mp requests add --file <csv|xlsx> [--sheet name]` / `mp requests` / `mp requests retry <row|name>` / `mp requests reset --failed-only`.
 
 ### Data shapes (decisions)
 

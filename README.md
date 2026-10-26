@@ -10,7 +10,7 @@ Turns saved cooking videos (YouTube playlists, Instagram saved "All posts", Face
 | `.scratch/wayfinder-video-recipes/map.md` | The **wayfinder map**: decisions made so far, open decision tickets, fog, out of scope |
 | `.scratch/wayfinder-video-recipes/issues/` | Decision tickets (research / task / grilling) |
 | `.scratch/video-recipe-pipeline/spec.md` | The **spec** the build follows |
-| `.scratch/video-recipe-pipeline/issues/` | 24 **implementation tickets** (tracer-bullet slices with `Blocked by:` edges) |
+| `.scratch/video-recipe-pipeline/issues/` | 28 **implementation tickets** (tracer-bullet slices with `Blocked by:` edges) |
 | `PIPELINE_SPEC.md` | Design reference: research, Mealie API details, rationale |
 | `GLOSSARY.md`, `docs/adr/` | Domain language and recorded decisions |
 | `scripts/check_mealie.py` | Standalone Mealie API check (no install needed) |
@@ -49,6 +49,9 @@ Always start the lowest-numbered ticket whose blockers are finished (`done` for 
          └─ 08 ─ 09 ─ 10
 22 (skip recipes already in Mealie): after 03, 04. Needed before 18, 19, 21
 25 (protein tags on every recipe): after 01. Ticket 10 also waits for it. `--apply` waits for W20
+26 (CSV/Excel of recipe names → Recipe Requests): after 03
+27 (find each name's recipe page on the web): after 26, 06 (W21 resolved: ddgs + Claude WebSearch fallback)
+28 (import the found recipes into Mealie): after 27, 02, 08, 22
 19 (you + agent): after 07, 13, 14, 22, W13, W14
 W20 (you + agent): after W13, and after 04, 15, 16 are done and every list is synced. Decide the final tag set (existing, new, difficulty) before any upload
 21: after 10, 11, 12, 15, 16, 17, 18, 20 and W19 (confirm run defaults with you), W20 (tag taxonomy review)

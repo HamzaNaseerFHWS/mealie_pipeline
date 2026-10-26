@@ -29,6 +29,7 @@ Every decision needed to **build and run** the pipeline over all of the user's S
 - [What must a recipe pass before it reaches Mealie?](issues/10-verification-gate.md): hard checks plus Quality Score. ≥ 80 upload, 60–79 upload with `To Review`, else Review Queue.
 - [Which Roman Urdu/Hindi spelling style?](issues/11-romanization-style.md): common creator-caption style, chosen by the planner.
 - [Where does everything run?](issues/12-runtime-environment.md): Windows laptop, Mealie on another PC via Tailscale. Agents test with fakes.
+- [How does the pipeline find a recipe page on the web from just a recipe name?](issues/21-recipe-name-search-provider.md): one-off, so anything that works now. `ddgs` (no key) primary, Claude Code's WebSearch via `claude -p` as fallback. Google's API is closed to new users.
 
 ## Not yet specified
 
