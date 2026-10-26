@@ -58,6 +58,39 @@ MIGRATIONS = [
     );
     """,
     "ALTER TABLE recipe_parts ADD COLUMN verify_json TEXT;",
+    # Migration 3: Recipe Requests (ticket 26). Appended; if a sibling branch also appended one, keep both.
+    """
+    CREATE TABLE recipe_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        row_number INTEGER NOT NULL,
+        source_file TEXT NOT NULL,
+        name TEXT NOT NULL,
+        name_key TEXT NOT NULL,
+        url TEXT,
+        url_key TEXT,
+        language TEXT,
+        notes TEXT,
+        cuisine TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        chosen_url TEXT,
+        candidates_json TEXT,
+        slug TEXT,
+        mealie_url TEXT,
+        score REAL,
+        reason TEXT,
+        last_error TEXT,
+        added_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """,
+    # Migration 4: where each request sits in the sheet and which category column it came from.
+    """
+    ALTER TABLE recipe_requests ADD COLUMN category TEXT;
+    ALTER TABLE recipe_requests ADD COLUMN position TEXT;
+    ALTER TABLE recipe_requests ADD COLUMN layout TEXT NOT NULL DEFAULT 'list';
+    ALTER TABLE recipe_requests ADD COLUMN identity TEXT;
+    UPDATE recipe_requests SET position = 'R' || row_number || 'C1', identity = 'name:' || name_key;
+    """,
 ]
 
 PART_JSON_FIELDS = {"extracted", "parsed", "tags", "verify"}
@@ -113,6 +146,11 @@ class StateStore:
         self._db = sqlite3.connect(path)
         self._db.row_factory = sqlite3.Row
         self._migrate()
+
+    @property
+    def db(self) -> sqlite3.Connection:
+        """The connection, for modules that own their own tables (Recipe Requests)."""
+        return self._db
 
     def close(self) -> None:
         self._db.close()
