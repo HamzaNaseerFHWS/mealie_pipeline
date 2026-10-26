@@ -14,7 +14,7 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `spec.md` modules 1 (State Store), 2 (Stage Runner) and 18 (Recipe Requests), and the CLI surface; ticket 03 (`mp add --file`, which this mirrors for names).
 
