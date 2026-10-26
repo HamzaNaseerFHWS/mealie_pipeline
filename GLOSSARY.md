@@ -96,5 +96,9 @@ Recipe Parts (and Videos) that need a human look, written as Markdown files with
 The tags, foods and units that already exist in Mealie, loaded at the start of a run. The pipeline never invents tags; foods and units may be created.
 _Avoid_: database, master data
 
+**Protein Tag**:
+A Tag naming a recipe's main protein (Chicken, Beef, Fish, Paneer, Lentils, Beans, Cheese, …), from the approved list in `config/protein_tags.yaml`. Added by rule, never removed.
+_Avoid_: meat tag, ingredient tag
+
 **Food**, **Unit**, **Tag**:
 Mealie's own records. Always English for Food and Unit.

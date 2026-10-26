@@ -7,7 +7,7 @@
 - **Tag count:** keep 1–6 tags. If none survive, retry once, then fall back to `To Review`.
 - **New tags:** suggestions go only to `reports/suggested_tags.csv`.
 
-**Blocked by:** 09
+**Blocked by:** 09, 25
 
 **Status:** ready-for-agent
 
@@ -15,6 +15,7 @@
 
 - [ ] Tag matching is case-, whitespace- and punctuation-insensitive (and compares slugs), so "Quick ", "quick" and "Quick!" resolve to the one existing tag. The pipeline never creates a tag that differs from an existing one only in case or spacing. Pure and table-tested.
 - [ ] Categories are **not** set in v1 (tags only, pending wayfinder 19). The payload never includes `recipeCategory`.
+- [ ] Protein Tags (ticket 25) are one of the Rule Tag families: the tagger calls ticket 25's detection on the parsed Foods and adds the matching Protein Tags. A newly uploaded chicken recipe carries `Chicken`.
 - [ ] Rule evaluation and contradiction removal are pure and table-tested (meat/fish/egg/dairy Food lists in config; vegetarian vs vegan handled separately).
 - [ ] Tag choice ranking: rule tags first, then LLM tags by rank, deduped, capped at 6.
 - [ ] `mp doctor` lists rules whose tag is missing from Mealie.

@@ -1,4 +1,4 @@
-﻿# 20: Which existing tags do we keep, and which new tags does the collection need?
+# 20: Which existing tags do we keep, and which new tags does the collection need?
 
 Type: grilling
 Status: open
@@ -23,7 +23,8 @@ The pipeline never invents tags (wayfinder 19 q2, ticket 10): the LLM and the Ru
 3. Export the collected Videos (title, creator, description or caption, platform, list) to a scratch CSV. If the State Store has no export yet, a throwaway script is fine. It is not product code.
 4. Survey the list for what the current tags cannot express. Count roughly how many Videos each gap affects. Look at least at:
    - **cuisine / nationality** (Pakistani, Turkish, Korean, Japanese, Thai, German, Chinese, …)
-   - **ingredient and spice types** (okra, lentils, paneer, chickpeas; spice-heavy, curry, masala)
+   - **main protein**: the Protein Tag list for ticket 25 (Chicken, Beef, Lamb & Mutton, Fish, Seafood, Turkey, Pork, Egg, Tofu, Paneer, Cheese, Lentils, Beans, Chickpeas, Soy chunks). Confirm the names, merge or split (Fish vs Salmon, Lamb vs Mutton, Paneer vs Cheese), and confirm that `mp tags protein --apply` may create the missing ones.
+   - **ingredient and spice types** (okra, paneer; spice-heavy, curry, masala)
    - **dish type** (curry, soup, bread, stir-fry, breakfast, sweet)
    - **difficulty** (easy / medium / hard)
    - **effort** (quick, meal-prep, one-pot, air-fryer, no-cook)
@@ -51,6 +52,7 @@ When resolved, the Answer must contain:
 - the tidy-up actions the user took or will take in Mealie
 - the Rule Tag mapping to hand to `config/tag_rules.yaml` (this also answers wayfinder 19 q6)
 - the tag-creation method chosen in q6
+- the confirmed Protein Tag list for `config/protein_tags.yaml` (ticket 25)
 
 ## Comments
 
