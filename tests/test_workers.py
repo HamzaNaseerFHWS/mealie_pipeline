@@ -374,6 +374,28 @@ def test_find_with_workers_keeps_requests_pending_when_every_search_fails(tmp_pa
     assert len(pending) == DISHES
 
 
+def test_workers_share_one_download_of_the_mealie_catalog(tmp_path: Path):
+    class SlowCatalogMealie(FakeMealie):
+        downloads = 0
+
+        def catalog(self):
+            SlowCatalogMealie.downloads += 1
+            time.sleep(0.1)  # long enough for every thread to arrive while the first is downloading
+            return super().catalog()
+
+    world = BigWorld(tmp_path)
+    adapters = fake_adapters(mealie=SlowCatalogMealie(token="t", tags=["Dinner"], foods=["Salt"]))
+    pipeline = Pipeline(world.workspace, load_settings(world.workspace), adapters, world.store())
+
+    threads = [threading.Thread(target=lambda: pipeline.catalog) for _ in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert SlowCatalogMealie.downloads == 1
+
+
 # -- settings and the command line ------------------------------------------------------------
 
 

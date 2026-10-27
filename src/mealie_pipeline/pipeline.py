@@ -114,6 +114,7 @@ class Pipeline:
         self.store = store
         self.now = now
         self._catalog: Catalog | None = None
+        self._catalog_lock = threading.Lock()  # workers must not each download the whole Catalog
         self._detail: dict[str, str] = {}
         self.mode = "skip"
         self.upgrade_existing = False
@@ -327,9 +328,10 @@ class Pipeline:
 
     @property
     def catalog(self) -> Catalog:
-        if self._catalog is None:
-            self._catalog = self.a.mealie.catalog()
-        return self._catalog
+        with self._catalog_lock:
+            if self._catalog is None:
+                self._catalog = self.a.mealie.catalog()
+            return self._catalog
 
     # -- stages ---------------------------------------------------------------------------
 
