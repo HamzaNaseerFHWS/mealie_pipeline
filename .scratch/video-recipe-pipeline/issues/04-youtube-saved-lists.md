@@ -4,7 +4,7 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `spec.md` modules 3 (`VideoSource.list_playlist`, `ListCollector`) and 4 (URL Normalizer); `PIPELINE_SPEC.md` §3.1.
 
