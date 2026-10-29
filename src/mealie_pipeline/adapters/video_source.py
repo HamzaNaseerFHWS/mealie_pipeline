@@ -81,6 +81,7 @@ def meta_from_info(info: dict[str, Any]) -> VideoMeta:
         description=info.get("description") or "",
         uploader=info.get("uploader") or info.get("channel") or "",
         uploader_id=info.get("uploader_id") or info.get("channel_id") or "",
+        channel=info.get("channel") or "",
         duration_s=info.get("duration"),
         upload_date=info.get("upload_date"),
         thumbnail=info.get("thumbnail"),

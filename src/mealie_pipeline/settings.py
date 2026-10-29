@@ -51,6 +51,14 @@ class WebSettings(BaseModel):
     robots_allowlist: list[str] = Field(default_factory=list)
     max_pages: int = 3  # candidate links tried per Video
     fetch_pinned_comment: bool = True
+    # Pages opened in the Browser (rendered) because they are JS-only link lists.
+    link_in_bio_hosts: list[str] = Field(
+        default_factory=lambda: ["linktr.ee", "lnk.bio", "beacons.ai", "bio.link"]
+    )
+    bio_min_score: float = 70  # a bio button must match the Video title at least this well
+    render_blocked: bool = True  # a page that came back blocked / JS-only is retried in the Browser
+    site_search: bool = True  # search the Creator's Recipe Website when the Video links no recipe
+    site_search_min_score: float = 85  # fuzzy title match needed for a site-search page
 
 
 class FindSettings(BaseModel):
@@ -101,6 +109,9 @@ class VerifySettings(BaseModel):
         default_factory=lambda: {"blocker": 30, "major": 15, "minor": 5}
     )
     review_tag: str = "To Review"
+    # A recipe from a page found by site search (not linked by the Video) must score at least this to
+    # upload without the review tag; the stricter Gate for the riskier match.
+    site_search_upload_at: float = 90
 
 
 class Settings(BaseModel):

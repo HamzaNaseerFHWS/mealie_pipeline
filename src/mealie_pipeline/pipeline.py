@@ -23,6 +23,7 @@ from mealie_pipeline.adapters import Adapters
 from mealie_pipeline.adapters.llm import LLMError, Tier, UsageLimited
 from mealie_pipeline.adapters.mealie import Catalog, Food, Tag, Unit
 from mealie_pipeline.adapters.video_source import VideoSourceError
+from mealie_pipeline.creators import CreatorRegistry, creator_handle
 from mealie_pipeline.errors import MealieError
 from mealie_pipeline.existing_links import build_link_set
 from mealie_pipeline.find import single_recipe
@@ -37,7 +38,7 @@ from mealie_pipeline.request_import import register_found, sync_outcomes
 from mealie_pipeline.review import write_review_file
 from mealie_pipeline.scoring import apply_judge, decide
 from mealie_pipeline.scrape import WebResult, find_web_recipe
-from mealie_pipeline.settings import Settings
+from mealie_pipeline.settings import Settings, VerifySettings
 from mealie_pipeline.store import EntityKind, StateStore, Status
 from mealie_pipeline.url_normalizer import normalize_website
 from mealie_pipeline.verify import Evaluation, evaluate
@@ -378,6 +379,8 @@ class Pipeline:
         meta = VideoMeta.model_validate(video.metadata)
         web = self.settings.web
         comment = self.a.videos.pinned_comments(video.canonical_url) if web.fetch_pinned_comment else ""
+        registry = CreatorRegistry(self.store)
+        handle = creator_handle(meta)
         result = find_web_recipe(
             title=meta.title,
             description=meta.description,
@@ -385,12 +388,22 @@ class Pipeline:
             fetcher=self.a.web,
             selectors=self.selectors,
             max_pages=web.max_pages,
+            browser=self.a.browser,
+            link_in_bio_hosts=web.link_in_bio_hosts,
+            bio_min_score=web.bio_min_score,
+            render_blocked=web.render_blocked,
+            site_search=web.site_search,
+            creator_site=registry.website(handle),
+            site_search_min_score=web.site_search_min_score,
         )
+        if result.website and result.website_source:  # the first Video that links a website teaches it
+            registry.learn(handle, result.website, result.website_source, video_key)
         path = self._web_path(video_key)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(result.model_dump_json(indent=1), encoding="utf-8")
         if result.usable and result.recipe:
-            self._detail[video_key] = f"{result.recipe.extraction_method} {result.final_url}"
+            how = f" via {result.link_source}" if result.link_source in ("link_in_bio", "site_search") else ""
+            self._detail[video_key] = f"{result.recipe.extraction_method} {result.final_url}{how}"
         else:
             self._detail[video_key] = f"no website recipe ({result.reason})"
             if result.reason in ("needs_browser", "robots", "error"):
@@ -521,8 +534,16 @@ class Pipeline:
             self.settings.verify,
         )
 
-    def _verify(self, item_key: str, report: RunReport, dry_run: bool) -> None:
+    def _gate_config(self, video_key: str) -> VerifySettings:
+        """The Gate's thresholds; a page found by site search must clear a higher upload bar."""
         cfg = self.settings.verify
+        web = self._web(video_key)
+        if web is not None and web.link_source == "site_search":
+            return cfg.model_copy(update={"upload_at": max(cfg.upload_at, cfg.site_search_upload_at)})
+        return cfg
+
+    def _verify(self, item_key: str, report: RunReport, dry_run: bool) -> None:
+        cfg = self._gate_config(self.store.part(item_key).video_key)
         attempts = 1
         evaluation = self._evaluate(item_key)
         judge = self._judge(item_key, evaluation)

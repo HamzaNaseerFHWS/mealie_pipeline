@@ -123,6 +123,16 @@ MIGRATIONS = [
     ALTER TABLE videos ADD COLUMN early_json TEXT;
     INSERT OR IGNORE INTO video_urls (video_key, url) SELECT video_key, url FROM videos;
     """,
+    # Migration 7 (ticket 17): the Creator -> Recipe Website registry, keyed by normalized handle.
+    """
+    CREATE TABLE creator_websites (
+        handle TEXT PRIMARY KEY,
+        website TEXT NOT NULL,
+        source TEXT NOT NULL,
+        learned_from TEXT,
+        added_at TEXT NOT NULL
+    );
+    """,
 ]
 
 PART_JSON_FIELDS = {"extracted", "parsed", "tags", "verify"}

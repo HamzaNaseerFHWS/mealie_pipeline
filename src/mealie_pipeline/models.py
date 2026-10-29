@@ -68,6 +68,7 @@ class VideoMeta(BaseModel):
     description: str = ""
     uploader: str = ""
     uploader_id: str = ""
+    channel: str = ""  # Instagram: the username (its uploader_id is a number)
     duration_s: float | None = None
     upload_date: str | None = None
     thumbnail: str | None = None
