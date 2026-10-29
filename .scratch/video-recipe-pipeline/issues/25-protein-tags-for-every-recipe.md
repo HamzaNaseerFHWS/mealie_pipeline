@@ -47,7 +47,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `spec.md` modules 3 (`MealieGateway`) and 11 (Tagger); ticket 10; wayfinder ticket 20 (tag taxonomy). The protein list is part of its "ingredient types" dimension. Ticket 01's Comments cover the live-instance findings (v3.22.0, case-insensitive catalog names).
 
