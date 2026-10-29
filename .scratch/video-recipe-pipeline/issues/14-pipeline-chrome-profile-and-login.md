@@ -9,7 +9,7 @@
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `docs/adr/0005`; `PIPELINE_SPEC.md` §3.1 "Login and session handling".
 
