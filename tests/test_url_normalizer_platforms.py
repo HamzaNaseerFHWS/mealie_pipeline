@@ -2,7 +2,13 @@
 
 import pytest
 
-from mealie_pipeline.url_normalizer import normalize, normalize_website
+from mealie_pipeline.url_normalizer import (
+    needs_redirect,
+    normalize,
+    normalize_list,
+    normalize_website,
+    resolve,
+)
 
 IG = "https://www.instagram.com/p/C9xYz12AbCd/"
 FB = "https://www.facebook.com/watch/?v=1234567890123456"
@@ -71,3 +77,77 @@ def test_profile_and_short_links_are_not_videos(url):
 )
 def test_normalize_website(url, expected):
     assert normalize_website(url) == expected
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://fb.watch/abc123/", True),
+        ("https://www.facebook.com/share/v/1AbCdEf/", True),
+        ("https://www.facebook.com/share/r/1AbCdEf/?mibextid=xyz", True),
+        ("https://m.facebook.com/share/v/1AbCdEf/", True),
+        ("https://www.facebook.com/reel/1234567890123456", False),
+        ("https://www.instagram.com/reel/C9xYz12AbCd/", False),
+        ("https://youtu.be/dQw4w9WgXcQ", False),
+        ("https://example.com/share/v/1", False),
+    ],
+)
+def test_short_and_share_links_are_marked_for_redirect_resolution(url, expected):
+    assert needs_redirect(url) is expected
+
+
+def test_resolve_follows_the_redirect_before_normalizing():
+    redirects = {
+        "https://fb.watch/abc123/": "https://www.facebook.com/reel/1234567890123456?mibextid=s",
+        "https://www.facebook.com/share/v/1AbCdEf/": "https://www.facebook.com/somepage/videos/1234567890123456/",
+    }
+    expanded: list[str] = []
+
+    def expand(url: str) -> str:
+        expanded.append(url)
+        return redirects.get(url, url)
+
+    assert resolve("https://fb.watch/abc123/", expand).video_key == "facebook:1234567890123456"  # type: ignore[union-attr]
+    assert resolve("https://www.facebook.com/share/v/1AbCdEf/", expand).canonical_url == FB  # type: ignore[union-attr]
+    assert resolve(YT, expand).video_key == "youtube:dQw4w9WgXcQ"  # type: ignore[union-attr]
+    assert resolve("https://fb.watch/dead/", expand) is None  # the redirect led nowhere useful
+    assert expanded == [
+        "https://fb.watch/abc123/",
+        "https://www.facebook.com/share/v/1AbCdEf/",
+        "https://fb.watch/dead/",
+    ]
+
+
+PL = "https://www.youtube.com/playlist?list="
+
+
+@pytest.mark.parametrize(
+    ("url", "key", "canonical", "private"),
+    [
+        (f"{PL}PLabc123", "youtube:PLabc123", f"{PL}PLabc123", False),
+        ("https://m.youtube.com/playlist?list=PLabc123&si=zzz", "youtube:PLabc123", f"{PL}PLabc123", False),
+        (f"{YT}&list=PLabc123", "youtube:PLabc123", f"{PL}PLabc123", False),
+        (f"{PL}WL", "youtube:WL", f"{PL}WL", True),
+        ("https://youtube.com/playlist?list=LL", "youtube:LL", f"{PL}LL", True),
+    ],
+)
+def test_playlist_urls(url, key, canonical, private):
+    result = normalize_list(url)
+
+    assert result is not None
+    assert (result.list_key, result.canonical_url, result.private) == (key, canonical, private)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "https://www.youtube.com/@somechef",
+        "https://www.youtube.com/playlist",
+        "https://example.com/playlist?list=PLabc123",
+        "https://www.instagram.com/some.chef/saved/all-posts/",  # Instagram lists come with ticket 15
+        "",
+    ],
+)
+def test_unsupported_list_urls(url):
+    assert normalize_list(url) is None

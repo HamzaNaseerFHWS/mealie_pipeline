@@ -2,15 +2,20 @@
 
 Strips tracking parameters, folds the many URL shapes of one Video into one Video Key, and also
 provides `normalize_website` for ordinary recipe-page links. Facebook `fb.watch` and `/share/`
-short links need a redirect to resolve; the caller does that and then normalizes the result.
+short links need a redirect to resolve: `needs_redirect` marks them and `resolve` follows the
+redirect through the caller's `expand` before normalizing. `normalize_list` does the same for
+Saved List URLs (YouTube playlists so far).
 """
 
 import hashlib
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 _YT_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_YT_LIST = re.compile(r"^[A-Za-z0-9_-]{2,64}$")
+_YT_PRIVATE_LISTS = {"WL", "LL"}  # Watch Later and Liked: only visible when logged in
 _IG_CODE = re.compile(r"^[A-Za-z0-9_-]{5,}$")
 _FB_ID = re.compile(r"^\d{5,}$")
 _YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}
@@ -38,6 +43,22 @@ class NormalizedUrl:
     @property
     def video_key(self) -> str:
         return f"{self.platform}:{self.video_id}"
+
+
+@dataclass(frozen=True)
+class NormalizedList:
+    platform: str
+    list_id: str
+    canonical_url: str
+
+    @property
+    def list_key(self) -> str:
+        return f"{self.platform}:{self.list_id}"
+
+    @property
+    def private(self) -> bool:
+        """Always needs a login (Watch Later, Liked). Other lists may be private too; that shows on sync."""
+        return self.platform == "youtube" and self.list_id in _YT_PRIVATE_LISTS
 
 
 def _query(url_query: str) -> dict[str, str]:
@@ -78,6 +99,34 @@ def normalize(url: str) -> NormalizedUrl | None:
         if _FB_ID.match(video_id):
             return NormalizedUrl("facebook", video_id, f"https://www.facebook.com/watch/?v={video_id}")
     return None
+
+
+def needs_redirect(url: str) -> bool:
+    """`fb.watch/...` and Facebook `/share/...` links hide the Video behind a redirect."""
+    parsed = urlparse(url.strip())
+    host = (parsed.hostname or "").lower()
+    if host in {"fb.watch", "www.fb.watch"}:
+        return True
+    return host in _FACEBOOK_HOSTS and parsed.path.startswith("/share/")
+
+
+def resolve(url: str, expand: Callable[[str], str]) -> NormalizedUrl | None:
+    """`normalize`, after following the redirect of a short or share link with `expand`."""
+    return normalize(expand(url.strip()) if needs_redirect(url) else url)
+
+
+def normalize_list(url: str) -> NormalizedList | None:
+    """A Saved List URL -> platform, list id and canonical URL; None when unsupported.
+
+    A watch URL opened from a playlist (`watch?v=...&list=...`) names the playlist too."""
+    parsed = urlparse(url.strip())
+    host = (parsed.hostname or "").lower()
+    if host not in _YOUTUBE_HOSTS or parsed.path.rstrip("/") not in ("/playlist", "/watch"):
+        return None
+    list_id = _query(parsed.query).get("list", "")
+    if not _YT_LIST.match(list_id):
+        return None
+    return NormalizedList("youtube", list_id, f"https://www.youtube.com/playlist?list={list_id}")
 
 
 def _youtube(video_id: str) -> NormalizedUrl:

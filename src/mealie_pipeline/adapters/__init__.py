@@ -7,6 +7,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+from mealie_pipeline.adapters.collectors import ListCollector, YouTubeCollector
 from mealie_pipeline.adapters.downloader import HttpImageDownloader, ImageDownloader
 from mealie_pipeline.adapters.ingredient_engine import IngredientEngine, NlpIngredientEngine
 from mealie_pipeline.adapters.llm import ClaudeCliBackend, LLMBackend
@@ -30,11 +31,13 @@ class Adapters:
     web: WebFetcher
     search: WebSearch
     search_fallback: WebSearch
+    collectors: dict[str, ListCollector]  # one per platform, keyed like `Video.platform`
 
 
 def build_adapters(settings: Settings, workspace: Path) -> Adapters:
     token = settings.mealie_token.get_secret_value() if settings.mealie_token else ""
     claude_slots = threading.BoundedSemaphore(settings.llm.max_parallel)  # shared by every claude call
+    videos = YtDlpVideoSource()
     return Adapters(
         mealie=MealieHttpGateway(
             settings.mealie_url or "",
@@ -50,7 +53,7 @@ def build_adapters(settings: Settings, workspace: Path) -> Adapters:
             timeout_seconds=settings.llm.timeout_seconds,
             slots=claude_slots,
         ),
-        videos=YtDlpVideoSource(),
+        videos=videos,
         images=HttpImageDownloader(settings.images.timeout_seconds),
         engine=NlpIngredientEngine(),
         web=HttpxWebFetcher(
@@ -69,4 +72,5 @@ def build_adapters(settings: Settings, workspace: Path) -> Adapters:
             models=settings.llm.models,
             slots=claude_slots,
         ),
+        collectors={"youtube": YouTubeCollector(videos)},
     )

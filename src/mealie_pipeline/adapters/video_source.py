@@ -1,5 +1,7 @@
-"""The VideoSource port: yt-dlp as a library. Only `metadata` exists so far."""
+"""The VideoSource port: yt-dlp as a library. `metadata`, `pinned_comments` and `list_playlist`."""
 
+from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from mealie_pipeline.models import VideoMeta
@@ -7,6 +9,37 @@ from mealie_pipeline.models import VideoMeta
 
 class VideoSourceError(Exception):
     """The platform refused or the video could not be read."""
+
+
+class LoginRequired(VideoSourceError):
+    """The list or Video is private: only a logged-in session (`mp login <platform>`) can read it."""
+
+
+# Phrases in yt-dlp's errors that mean "log in first", not "this is broken".
+LOGIN_HINTS = (
+    "private",
+    "sign in",
+    "login required",
+    "log in",
+    "requires authentication",
+    "members-only",
+    "playlist does not exist",  # what YouTube says about someone else's private playlist
+)
+
+
+def is_login_error(message: str) -> bool:
+    lowered = message.lower()
+    return any(hint in lowered for hint in LOGIN_HINTS)
+
+
+@dataclass(frozen=True)
+class PlaylistEntry:
+    """One item of a flat playlist listing: the URL plus the metadata that comes for free."""
+
+    url: str
+    title: str | None = None
+    channel: str | None = None
+    duration_s: float | None = None
 
 
 class VideoSource(Protocol):
@@ -17,6 +50,25 @@ class VideoSource(Protocol):
     def pinned_comments(self, url: str) -> str:
         """Text of the creator's own pinned comment(s), or "" (many creators post the recipe there)."""
         ...
+
+    def list_playlist(self, url: str) -> Iterator[PlaylistEntry]:
+        """Every entry of a playlist, without downloading anything. Raises `LoginRequired`."""
+        ...
+
+
+def entry_from_flat(item: dict[str, Any]) -> PlaylistEntry | None:
+    """Maps one `extract_flat` playlist entry; None when it has no usable URL or id."""
+    url = item.get("url") or item.get("webpage_url") or ""
+    if not url and item.get("id"):
+        url = f"https://www.youtube.com/watch?v={item['id']}"
+    if not url:
+        return None
+    return PlaylistEntry(
+        url=url,
+        title=item.get("title"),
+        channel=item.get("channel") or item.get("uploader"),
+        duration_s=item.get("duration"),
+    )
 
 
 def meta_from_info(info: dict[str, Any]) -> VideoMeta:
@@ -68,3 +120,27 @@ class YtDlpVideoSource:
         return "\n\n".join(
             str(c.get("text") or "") for c in comments if c.get("is_pinned") and c.get("author_is_uploader")
         )
+
+    def list_playlist(self, url: str) -> Iterator[PlaylistEntry]:
+        import yt_dlp
+        from yt_dlp.utils import DownloadError
+
+        # extract_flat lists entries without visiting each Video; lazy_playlist pages through large
+        # playlists as the iterator is consumed instead of loading every page first.
+        options = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": "in_playlist",
+            "lazy_playlist": True,
+        }
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[arg-type]
+                info = ydl.extract_info(url, download=False)
+                for item in (info or {}).get("entries") or []:
+                    if isinstance(item, dict) and (entry := entry_from_flat(dict(item))) is not None:
+                        yield entry
+        except DownloadError as err:
+            if is_login_error(str(err)):
+                raise LoginRequired(str(err)) from err
+            raise VideoSourceError(str(err)) from err

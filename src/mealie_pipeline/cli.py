@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from mealie_pipeline.adapters import Adapters, build_adapters
+from mealie_pipeline.collect import sync_lists
 from mealie_pipeline.doctor import exit_code, render, run_doctor
 from mealie_pipeline.find import SitePolicy
 from mealie_pipeline.pipeline import STAGES, Pipeline, RunReport
@@ -20,7 +21,7 @@ from mealie_pipeline.request_finder import RequestFinder
 from mealie_pipeline.request_sheet import SheetError, read_sheet
 from mealie_pipeline.settings import Settings, load_settings
 from mealie_pipeline.store import StateStore
-from mealie_pipeline.url_normalizer import normalize
+from mealie_pipeline.url_normalizer import normalize, normalize_list
 
 REQUEST_STAGES = ("find",)  # stages of Recipe Requests, run with `mp run --stages find`
 
@@ -99,6 +100,82 @@ def add(
             typer.echo(f"already known {normalized.video_key}")
             duplicates += 1
     typer.echo(f"{added} added, {duplicates} already known, {unsupported} unsupported")
+
+
+lists_app = typer.Typer(help="Saved Lists: the playlists whose Videos `mp sync` collects.")
+app.add_typer(lists_app, name="lists")
+
+
+@lists_app.callback(invoke_without_command=True)
+def lists_show(ctx: typer.Context) -> None:
+    """Without a subcommand: each Saved List with its item count and last sync time."""
+    if ctx.invoked_subcommand is not None:
+        return
+    saved = _open_pipeline(ctx.obj).store.saved_lists()
+    if not saved:
+        typer.echo("No Saved Lists yet. Add one with `mp lists add <playlist url>`.")
+        return
+    table = Table(title="Saved Lists")
+    for column in ("list", "items", "last synced", "url", "problem"):
+        table.add_column(column, justify="right" if column == "items" else "left")
+    for s in saved:
+        table.add_row(s.list_key, str(s.item_count), s.last_synced or "never", s.url, s.last_error or "")
+    Console(width=160).print(table)
+
+
+@lists_app.command("add")
+def lists_add(
+    ctx: typer.Context,
+    url: Annotated[
+        str, typer.Argument(help="A YouTube playlist URL (also Watch Later: list=WL, Liked: list=LL).")
+    ],
+) -> None:
+    """Register a Saved List. Its Videos are collected by `mp sync`."""
+    normalized = normalize_list(url)
+    if normalized is None:
+        typer.echo(f"not a supported Saved List URL (YouTube playlists so far): {url}")
+        raise typer.Exit(2)
+    store = _open_pipeline(ctx.obj).store
+    if store.add_list(normalized.list_key, normalized.platform, normalized.canonical_url):
+        typer.echo(f"added {normalized.list_key}. Run `mp sync` to collect its Videos.")
+    else:
+        typer.echo(f"{normalized.list_key} is already registered")
+    if normalized.private:
+        typer.echo(
+            f"{normalized.list_id} is private: `mp sync` needs `mp login {normalized.platform}` first."
+        )
+
+
+@app.command()
+def sync(
+    ctx: typer.Context,
+    only: Annotated[
+        str | None, typer.Option("--list", help="Sync only this Saved List (its URL or List Key).")
+    ] = None,
+) -> None:
+    """Collect every Video of the Saved Lists into the State Store. Re-syncing adds only new ones."""
+    app_ctx: AppContext = ctx.obj
+    store = _open_pipeline(app_ctx).store
+    if not store.saved_lists():
+        typer.echo("No Saved Lists yet. Add one with `mp lists add <playlist url>`.")
+        raise typer.Exit(2)
+    keys = None
+    if only is not None:
+        normalized = normalize_list(only)
+        keys = [normalized.list_key if normalized else only]
+        if not any(s.list_key == keys[0] for s in store.saved_lists()):
+            typer.echo(f"{only} is not a registered Saved List (see `mp lists`)")
+            raise typer.Exit(2)
+    results = sync_lists(store, app_ctx.adapters.collectors, app_ctx.adapters.web.expand, only=keys)
+    for r in results:
+        if r.error is not None:
+            typer.echo(f"FAILED {r.list_key}: {r.error}")
+            continue
+        typer.echo(f"{r.list_key}: {r.seen} listed, {len(r.new)} new, {len(r.unsupported)} unsupported")
+        for url in r.unsupported:
+            typer.echo(f"  unsupported {url}")
+    typer.echo(f"Videos in the State Store: {len(store.videos())}. Run `mp run` to process the new ones.")
+    raise typer.Exit(1 if any(r.error for r in results) else 0)
 
 
 @app.command()
