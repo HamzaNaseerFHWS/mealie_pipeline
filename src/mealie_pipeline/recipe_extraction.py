@@ -5,6 +5,7 @@ Order: JSON-LD (including `@graph`), microdata / RDFa, recipe-card plugin HTML (
 several Recipe objects returns all of them (ticket 12 splits them); callers take the best match.
 """
 
+import html
 import re
 from typing import Any
 
@@ -58,7 +59,7 @@ def parse_duration(value: Any) -> int | None:
 
 
 def _clean(text: Any) -> str:
-    return " ".join(str(text).split())
+    return " ".join(html.unescape(str(text)).split())  # some sites double-encode: "&#190; cup"
 
 
 def _key(name: str) -> str:
@@ -67,10 +68,13 @@ def _key(name: str) -> str:
 
 
 def _get(item: dict[str, Any], *names: str) -> Any:
-    wanted = {n.lower() for n in names}
+    """The value of the first of `names` the item has (in the order given, not the item's own order)."""
+    keyed = {}
     for key, value in item.items():
-        if _key(key) in wanted:
-            return value
+        keyed.setdefault(_key(key), value)
+    for name in names:
+        if name.lower() in keyed:
+            return keyed[name.lower()]
     return None
 
 

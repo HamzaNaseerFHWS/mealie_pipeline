@@ -43,6 +43,20 @@ def test_wordpress_wprm_page_with_a_yoast_graph_is_read_from_json_ld():
     assert recipe.image == "https://foodlab.example/wp-content/uploads/bhindi-aloo.jpg"
 
 
+def test_a_step_with_a_name_and_a_text_keeps_the_text_and_entities_are_decoded():
+    (recipe,) = extract("named_steps.html")
+
+    assert [s.text for s in recipe.steps] == [
+        "Mix everything except the oil in a bowl.",
+        "Fry spoonfuls of batter until golden.",
+    ]
+    assert [i.text for i in recipe.ingredients] == [
+        "¾ cup besan (chickpea flour)",
+        "1 red onion, finely chopped",
+        "1 ½ tsp table salt",
+    ]
+
+
 def test_a_tasty_recipes_page_without_structured_data_is_read_from_the_card():
     (recipe,) = extract("tasty_card.html")
 

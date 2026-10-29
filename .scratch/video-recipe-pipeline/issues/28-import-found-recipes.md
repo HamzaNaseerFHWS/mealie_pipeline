@@ -75,3 +75,11 @@ French Toast, Avocado-Sandwich, then batches of 20 and 50 from `food_list_katego
   - Short German names match the wrong page ("Tee" imported "Tee's Corn Pudding"). German and Urdu/Hindi handling waits for ticket 11.
   - German pages score lower (60-70, `To Review` tag); English and desi pages mostly 85-100.
 - A `--limit N` on a plain `mp run` limits the find stage; the import then runs for every `found` request.
+
+### Final state of the CSV import (2026-10-29)
+
+271 of 307 names are in Mealie (plus 1 already there); 10 failed, 20 not found, 3 need a browser, 2 held for review.
+
+- **Empty extractions were a scraper bug, not the German pages.** `recipe_extraction._get` returned the first matching key in the item's own order, so a `HowToStep` with `"name": "Step 1"` before `"text": ...` gave the steps "Step 1".."Step 6" and the model rightly found no method. `_get` now honours the order of the names asked for, and `_clean` decodes HTML entities (`&#190;` -> `3/4`). The 12 affected pages were re-scraped and imported.
+- **Held German recipes** were fixed by ticket 30 (source food names as aliases): 14 uploaded, 2 stay in review (Lentil Bolognese has no method; the vegan sausages page is not the dish).
+- **Still open:** 8 `parse` crashes on quantity text (`'few'`, `'half'`, `'1.5-2'`, `''`, `'3-#1$2-4'`: `NlpIngredientEngine` calls `float()` on a text amount), 2 "Recipe already exists" on upload, 3 pages that need a browser, 1 page that no longer holds one recipe.
