@@ -10,7 +10,7 @@ Add Sanity Checks (implausible quantity per unit, a unit used as the food, count
 
 **Blocked by:** 08
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `spec.md` module 10 and the payload builder in module 13; `PIPELINE_SPEC.md` §7.
 
