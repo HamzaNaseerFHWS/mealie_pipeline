@@ -3,6 +3,7 @@
 import re
 
 from mealie_pipeline.matching import singularize
+from mealie_pipeline.models import ParsedIngredient
 
 MAX_SERVINGS = 50
 MAX_TOTAL_MINUTES = 24 * 60
@@ -82,3 +83,31 @@ def food_overlap(video_foods: set[str], website_foods: set[str]) -> tuple[float,
         return 0.0, "no foods on either side"
     score = len(video_foods & website_foods) / len(union)
     return score, f"food overlap {score:.2f}"
+
+
+def parse_agreement(parsed: list[ParsedIngredient]) -> tuple[float | None, str]:
+    """S3. Share of the lines both parse engines read alike (`agreed` or `nlp_preferred`).
+
+    `conflict` and `unparsed` lines count against it; lines with no LLM parse (`nlp_only`) are left
+    out, and with none left the check does not apply (None)."""
+    compared = [p for p in parsed if p.parse_status != "nlp_only"]
+    if not compared:
+        return None, "no LLM parse to compare with"
+    alike = [p for p in compared if p.parse_status in ("agreed", "nlp_preferred")]
+    details = [f"{len(alike)} of {len(compared)} lines parsed alike"]
+    for status in ("conflict", "unparsed"):
+        lines = [p.original_text for p in compared if p.parse_status == status]
+        if lines:
+            details.append(f"{status}: " + " | ".join(lines))
+    return len(alike) / len(compared), "; ".join(details)
+
+
+def quantity_sanity(parsed: list[ParsedIngredient]) -> tuple[float | None, str]:
+    """S5. 1 - suspicious lines / lines, from the Sanity Checks of the parse stage."""
+    if not parsed:
+        return None, "no ingredients"
+    suspicious = [p for p in parsed if p.suspicious]
+    if not suspicious:
+        return 1.0, "no suspicious lines"
+    listed = " | ".join(f"{p.original_text}: {'; '.join(p.suspicious)}" for p in suspicious)
+    return 1 - len(suspicious) / len(parsed), f"{len(suspicious)} suspicious lines: {listed}"

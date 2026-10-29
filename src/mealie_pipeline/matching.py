@@ -71,6 +71,15 @@ class UnitNormalizer:
             for spelling in spellings:
                 self._canonical[_clean(spelling)] = canonical
 
+    def canonical(self, text: str) -> str:
+        """The unit name a spelling stands for ("tbsps", "EL" -> "tablespoon"); "" for no unit."""
+        raw = _clean(text)
+        return self._canonical.get(raw) or self._canonical.get(singularize(raw)) or singularize(raw)
+
+    def spellings(self) -> set[str]:
+        """Every unit name and spelling in the table, cleaned."""
+        return set(self._canonical)
+
     def match(self, text: str, units: list[Unit]) -> UnitMatch:
         raw = _clean(text)
         if not raw:

@@ -1,8 +1,15 @@
-"""S1, S2 and S6 (pure, table-driven)."""
+"""S1, S2, S3, S5 and S6 (pure, table-driven)."""
 
 import pytest
 
-from mealie_pipeline.checks import food_overlap, ingredients_vs_steps, plausibility
+from mealie_pipeline.checks import (
+    food_overlap,
+    ingredients_vs_steps,
+    parse_agreement,
+    plausibility,
+    quantity_sanity,
+)
+from mealie_pipeline.models import ParsedIngredient
 
 KNOWN = ["okra", "onion", "oil", "salt", "garlic", "water"]
 
@@ -81,3 +88,41 @@ def test_food_overlap_is_a_jaccard_score():
 
     assert score == pytest.approx(0.5)  # 2 shared of 4 distinct
     assert food_overlap(set(), set())[0] == 0.0
+
+
+def line(text, status="agreed", suspicious=()):
+    return ParsedIngredient(original_text=text, food_name=text, parse_status=status, suspicious=list(suspicious))
+
+
+@pytest.mark.parametrize(
+    ("statuses", "score", "mention"),
+    [
+        (["agreed", "agreed", "nlp_preferred", "agreed"], 1.0, "4 of 4 lines parsed alike"),
+        (["agreed", "agreed", "agreed", "conflict"], 0.75, "conflict: line 3"),
+        (["agreed", "unparsed"], 0.5, "unparsed: line 1"),
+        (["agreed", "nlp_only", "conflict"], 0.5, "1 of 2 lines"),  # an engine-A-only line is not counted
+        (["nlp_only", "nlp_only"], None, "no LLM parse"),
+        ([], None, "no LLM parse"),
+    ],
+)
+def test_parse_agreement(statuses, score, mention):
+    got, details = parse_agreement([line(f"line {i}", s) for i, s in enumerate(statuses)])
+
+    assert got == (pytest.approx(score) if score is not None else None)
+    assert mention in details
+
+
+@pytest.mark.parametrize(
+    ("findings", "score", "mention"),
+    [
+        ([[], [], [], []], 1.0, "no suspicious lines"),
+        ([[], ["5 kilogram of salt is implausibly much"], [], []], 0.75, "line 1: 5 kilogram of salt"),
+        ([["a"], ["b"], [], []], 0.5, "2 suspicious lines"),
+        ([], None, "no ingredients"),
+    ],
+)
+def test_quantity_sanity(findings, score, mention):
+    got, details = quantity_sanity([line(f"line {i}", suspicious=f) for i, f in enumerate(findings)])
+
+    assert got == (pytest.approx(score) if score is not None else None)
+    assert mention in details

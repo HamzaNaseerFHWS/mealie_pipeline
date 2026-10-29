@@ -3,7 +3,7 @@
 import pytest
 
 from mealie_pipeline.models import ExtractedRecipe, ParsedIngredient
-from mealie_pipeline.payload import build_payload, iso_duration
+from mealie_pipeline.payload import build_payload, iso_duration, link_steps
 
 
 @pytest.mark.parametrize(
@@ -100,3 +100,56 @@ def test_provenance_times_notes_and_steps():
     assert payload["notes"] == [{"title": "", "text": "Keeps 3 days."}]
     assert [s["title"] for s in payload["recipeInstructions"]] == ["Sauce", "", "Dough"]
     assert payload["tags"] == [{"id": "t1", "name": "Dinner", "slug": "dinner"}]
+
+
+def test_steps_reference_the_ingredients_whose_food_they_mention():
+    recipe = ExtractedRecipe.model_validate(
+        {
+            "is_recipe": True,
+            "name": "Bhindi",
+            "instructions": [
+                {"text": "Heat the mustard oil and add the cumin seeds.", "evidence": []},
+                {"text": "Fry the onions until golden, then add the bhindi.", "evidence": []},
+                {"text": "Season with Salz.", "evidence": []},
+                {"text": "Serve hot.", "evidence": []},
+            ],
+        }
+    )
+    parsed = [
+        ingredient("mustard oil"),
+        ingredient("cumin seeds"),
+        ingredient("onion"),  # the step says "onions"
+        ingredient("okra", food_aliases=["bhindi"]),  # the step uses the Food's alias
+        ingredient("salt", food_original="Salz"),  # the step uses the source's own word
+        ingredient("oil"),  # a second, plain oil: "mustard oil" in a step mentions it too
+    ]
+    ids = iter(f"ref-{n}" for n in range(100))
+    payload = build_payload(
+        recipe, parsed, [], org_url="", item_key="k", video_key="v", platform="web", new_id=lambda: next(ids)
+    )
+
+    refs = [[r["referenceId"] for r in s["ingredientReferences"]] for s in payload["recipeInstructions"]]
+    assert refs == [["ref-0", "ref-1", "ref-5"], ["ref-2", "ref-3"], ["ref-4"], []]
+
+
+def test_a_note_only_line_has_no_food_and_is_never_referenced():
+    payload = build([ParsedIngredient(original_text="a little love", food_name="", note="a little love")])
+
+    assert payload["recipeIngredient"][0]["food"] is None
+    assert all(s["ingredientReferences"] == [] for s in payload["recipeInstructions"])
+
+
+@pytest.mark.parametrize(
+    ("step", "names", "linked"),
+    [
+        ("Add the tomatoes.", ["tomato"], True),
+        ("Add the Tomato.", ["tomatoes"], True),
+        ("Add the cumin powder.", ["cumin seeds"], False),
+        ("Add the green chillies.", ["green chilli"], True),
+        ("Add the chillies.", ["green chilli"], False),  # the whole name must be there
+        ("Add Zwiebeln.", ["onion", "Zwiebeln"], True),
+        ("Add saltwater.", ["salt"], False),  # whole words only
+    ],
+)
+def test_step_linking_matches_whole_food_names_singular_or_plural(step, names, linked):
+    assert link_steps([step], [("r", names)]) == [["r"] if linked else []]

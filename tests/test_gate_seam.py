@@ -80,9 +80,9 @@ def test_a_hallucinated_ingredient_is_dropped_and_the_rest_uploads(world: World)
     verify = stored_verify(world)
     assert verify["dropped_ingredients"] == ["2 cups saffron"]
     assert verify["outcome"] == "upload"
-    # Hand-computed: H3 = 1 - 1/6 = 0.8333 (weight 20), S2 = 1 (25), S6 = 1 (15).
-    # (20*0.8333 + 25 + 15) / 60 = 94.4, above the judge-skip level of 90.
-    assert verify["score"] == 94.4
+    # Hand-computed: H3 = 1 - 1/6 = 0.8333 (weight 20), S2 = 1 (25), S5 = 1 (10), S6 = 1 (15).
+    # (20*0.8333 + 25 + 10 + 15) / 70 = 95.2, above the judge-skip level of 90.
+    assert verify["score"] == 95.2
     assert "judge" not in tasks(world)  # no extra LLM call for a score of 90 or more
     assert [t.name for t in [t for t in world.mealie.tags.values() if t.name == "To Review"]] == []
 
@@ -163,9 +163,10 @@ def test_a_recipe_scoring_between_60_and_79_uploads_with_the_review_tag(world: W
 
     assert result.exit_code == 0, result.output
     # Hand-computed: cumin seeds and salt are never used in the single step, so S2 = 1 - 2/5 = 0.6.
-    # (20*1 + 25*0.6 + 15*1) / 60 = 83.3: below 90, so the judge runs; one `major` costs 15 -> 68.3.
+    # (20*1 + 25*0.6 + 10*1 + 15*1) / 70 = 85.7 (S5 = 1: no suspicious line): below 90, so the judge
+    # runs; one `major` costs 15 -> 70.7.
     verify = stored_verify(world)
-    assert verify["score"] == 68.3
+    assert verify["score"] == 70.7
     assert verify["outcome"] == "upload_review"
     assert "S2" in verify["failed_checks"] and "S7" in verify["failed_checks"]
     assert tasks(world) == ["extract", "judge"]
@@ -198,7 +199,7 @@ def test_a_blocker_from_the_judge_sends_the_recipe_to_review_after_one_retry(wor
     result = run(world)
 
     assert result.exit_code == 0, result.output
-    assert world.mealie.recipes == {}  # 83.3 - 30 = 53.3 < 60, twice
+    assert world.mealie.recipes == {}  # 85.7 - 30 = 55.7 < 60, twice
     assert tasks(world) == ["extract", "judge", "extract", "judge"]
     assert stored_verify(world)["outcome"] == "review"
 
@@ -213,7 +214,7 @@ def test_an_unavailable_judge_never_blocks_the_recipe(world: World):
     result = run(world)
 
     assert result.exit_code == 0, result.output
-    assert stored_verify(world)["score"] == 83.3 and len(world.mealie.recipes) == 1
+    assert stored_verify(world)["score"] == 85.7 and len(world.mealie.recipes) == 1
 
 
 # other hard checks and the dry run ------------------------------------------------------------

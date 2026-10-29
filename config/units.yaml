@@ -1,22 +1,27 @@
-# Unit synonyms -> the Mealie unit name they should map to (ticket 02, Unit Normalizer).
-# Keys are canonical Mealie unit names; values are spellings found in recipes (any case, plurals handled).
+# Unit synonyms -> the Mealie unit name they should map to (tickets 02 and 09, Unit Normalizer).
+# Keys are canonical Mealie unit names (always English); values are spellings found in recipes, any
+# case, plurals and a trailing "." handled. German and Urdu/Hindi spellings are listed so a line the
+# extraction left untranslated ("2 EL", "1 katori") still lands on the English unit.
 # If your Mealie has no unit of that name, the pipeline creates it (and logs it in reports/created_units.csv).
-gram: [g, gr, gm, gms, grams, gramme, grammes]
-kilogram: [kg, kgs, kilo, kilos, kilograms]
+gram: [g, gr, gm, gms, grams, gramme, grammes, gramm]
+kilogram: [kg, kgs, kilo, kilos, kilograms, kilogramm]
 milligram: [mg]
 milliliter: [ml, mls, millilitre, millilitres, milliliters, cc]
-liter: [l, litre, litres, liters, ltr]
-teaspoon: [tsp, tsps, t, teaspoons, tl, teelöffel]
-tablespoon: [tbsp, tbsps, tbs, tbl, tablespoons, el, esslöffel]
-cup: [cups, c, tasse, tassen]
+liter: [l, litre, litres, liters, ltr, liter]
+teaspoon: [tsp, tsps, t, teaspoons, tl, teelöffel, chhota chammach, choti chammach]
+tablespoon: [tbsp, tbsps, tbs, tbl, tablespoons, el, esslöffel, chammach, chamach, chammch, chamcha]
+cup: [cups, c, tasse, tassen, katori, katoris, katori bhar]
+glass: [glasses, glas, gilas, glass bhar]
 ounce: [oz, ounces]
 pound: [lb, lbs, pounds]
-pinch: [pinches, prise, prisen]
-dash: [dashes]
-handful: [handfuls]
-clove: [cloves, zehe, zehen]
-slice: [slices]
-piece: [pieces, pc, pcs, stück]
-bunch: [bunches]
-can: [cans, tin, tins]
-sprig: [sprigs]
+quarter kilogram: [pao, paao, pav bhar]  # a pao is 250 g; the amount is kept, not converted
+pinch: [pinches, prise, prisen, msp, messerspitze, chutki, chutkis, chutki bhar]
+dash: [dashes, spritzer, schuss]
+handful: [handfuls, handvoll, mutthi, mutthi bhar]
+clove: [cloves, zehe, zehen, knoblauchzehe, knoblauchzehen, jawa, joway]
+slice: [slices, scheibe, scheiben]
+piece: [pieces, pc, pcs, stück, stk]
+bunch: [bunches, bund, bündel, gaddi]
+can: [cans, tin, tins, dose, dosen]
+sprig: [sprigs, zweig, zweige, stängel]
+packet: [packets, pack, packs, päckchen, packung, pkt]

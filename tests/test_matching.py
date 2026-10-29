@@ -51,6 +51,42 @@ def test_unit_normalizer(text, kind, unit_id, new_name):
 
 
 @pytest.mark.parametrize(
+    ("text", "canonical"),
+    [
+        # English units and abbreviations
+        ("tbsp", "tablespoon"),
+        ("Tbs.", "tablespoon"),
+        ("tsp", "teaspoon"),
+        ("oz", "ounce"),
+        ("lbs", "pound"),
+        ("ml", "milliliter"),
+        ("kg", "kilogram"),
+        # German originals
+        ("EL", "tablespoon"),
+        ("TL", "teaspoon"),
+        ("Prise", "pinch"),
+        ("Bund", "bunch"),
+        ("Zehe", "clove"),
+        ("Msp.", "pinch"),
+        # Urdu/Hindi originals
+        ("chammach", "tablespoon"),
+        ("katori", "cup"),
+        ("pao", "quarter kilogram"),
+        ("chutki", "pinch"),
+        ("", ""),
+    ],
+)
+def test_unit_spellings_map_to_english_mealie_unit_names(text, canonical):
+    assert UnitNormalizer(SYNONYMS).canonical(text) == canonical
+
+
+def test_a_german_unit_resolves_to_the_catalog_unit_id():
+    match = UnitNormalizer(SYNONYMS).match("EL", UNITS)
+
+    assert (match.kind, match.unit.id if match.unit else None) == ("alias", "u-tbsp")
+
+
+@pytest.mark.parametrize(
     ("name", "kind", "food_id", "new_name"),
     [
         ("salt", "exact", "f-salt", ""),  # case-insensitive, keeps the catalog's "Salt"

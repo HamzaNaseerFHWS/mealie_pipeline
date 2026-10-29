@@ -106,16 +106,13 @@ def evaluate(
     if evaluation.dropped:
         detail += "; dropped: " + " | ".join(evaluation.dropped)
     add(CheckResult("H3", "hard", h3_ok, None, detail))
-    missing_food = [p.original_text for p in kept_parsed if not p.food_id]
-    add(
-        CheckResult(
-            "H4",
-            "hard",
-            not missing_food,
-            None,
-            "every ingredient has a Food" if not missing_food else "no Food for: " + " | ".join(missing_food),
-        )
+    # An `unparsed` line (no food found by either parse engine) is a note line nobody intended.
+    unparsed = [p.original_text for p in kept_parsed if p.parse_status == "unparsed"]
+    missing_food = [p.original_text for p in kept_parsed if not p.food_id and p.parse_status != "unparsed"]
+    problems = (["no Food for: " + " | ".join(missing_food)] if missing_food else []) + (
+        ["unparsed (no food found by either parser): " + " | ".join(unparsed)] if unparsed else []
     )
+    add(CheckResult("H4", "hard", not problems, None, "; ".join(problems) or "every ingredient has a Food"))
     add(CheckResult("H5", "hard", bool(tags), None, f"{len(tags)} tags"))
 
     s2, s2_details = checks.ingredients_vs_steps(
@@ -124,15 +121,17 @@ def evaluate(
         known_foods,
         [p.food_original for p in kept_parsed],
     )
+    s3, s3_details = checks.parse_agreement(kept_parsed)
+    s5, s5_details = checks.quantity_sanity(kept_parsed)
     s6, s6_details = checks.plausibility(
         recipe.servings, recipe.prep_minutes, recipe.cook_minutes, recipe.total_minutes
     )
     soft = [
         ("S1", None, "no website Source yet"),
         ("S2", s2, s2_details),
-        ("S3", None, "parse agreement needs the second parse engine (ticket 09)"),
+        ("S3", s3, s3_details),
         ("S4", None, "no transcript Source yet"),
-        ("S5", None, "quantity sanity needs the second parse engine (ticket 09)"),
+        ("S5", s5, s5_details),
         ("S6", s6, s6_details),
     ]
     for check_id, score, details in soft:

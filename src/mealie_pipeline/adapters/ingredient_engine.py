@@ -1,7 +1,8 @@
 """Engine A of the Ingredient Parser: `ingredient-parser-nlp`, behind a port so tests need no model."""
 
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Protocol
 
 
@@ -12,7 +13,11 @@ class EngineParse:
     unit: str
     food: str
     note: str
-    confidence: float
+    confidence: float  # the lowest of the field confidences
+    confidences: Mapping[str, float] = field(default_factory=dict)  # "quantity" / "unit" / "food"
+
+    def confidence_of(self, name: str) -> float:
+        return self.confidences.get(name, self.confidence)
 
 
 _WORD_QUANTITIES = {"half": 0.5, "quarter": 0.25, "third": 1 / 3, "dozen": 12.0}
@@ -79,6 +84,9 @@ class NlpIngredientEngine:
         if amount and quantity is None and isinstance(amount.quantity, str) and amount.quantity.strip():
             notes.insert(0, amount.quantity.strip())  # "few", "a pinch": keep the words, there is no number
         confidences = [n.confidence for n in names] + ([amount.confidence] if amount else [])
+        by_field = {"food": min((n.confidence for n in names), default=0.0)}
+        if amount:  # the parser scores the amount as a whole, quantity and unit together
+            by_field |= {"quantity": amount.confidence, "unit": amount.confidence}
         return EngineParse(
             quantity=quantity,
             quantity_max=quantity_max,
@@ -86,6 +94,7 @@ class NlpIngredientEngine:
             food=food,
             note=", ".join(notes),
             confidence=min(confidences) if confidences else 0.0,
+            confidences=by_field,
         )
 
 

@@ -30,11 +30,13 @@ from mealie_pipeline.images import attach_image, candidate_urls
 from mealie_pipeline.matching import FoodMatcher, UnitNormalizer
 from mealie_pipeline.models import ExtractedRecipe, Judge, ParsedIngredient, VideoMeta, extraction_schema
 from mealie_pipeline.payload import build_payload
+from mealie_pipeline.reconcile import reconcile
 from mealie_pipeline.recipe_extraction import extract_recipes
 from mealie_pipeline.recipe_extraction import format_for_prompt as web_text
 from mealie_pipeline.recipe_requests import RecipeRequest, RecipeRequests
 from mealie_pipeline.request_import import register_found, sync_outcomes
 from mealie_pipeline.review import write_review_file
+from mealie_pipeline.sanity import check_line
 from mealie_pipeline.scoring import apply_judge, decide
 from mealie_pipeline.scrape import WebResult, find_web_recipe
 from mealie_pipeline.settings import Settings
@@ -667,8 +669,10 @@ class Pipeline:
                     [f.name for f in self.catalog.foods],
                     self.settings.verify,
                 )
-                # Hard checks other than H4 (Foods are not created in a dry run, so ids are missing).
-                hard = [c for c in evaluation.hard_failures if c != "H4"]
+                # Hard checks other than H4 (Foods are not created in a dry run, so ids are missing),
+                # unless a line is `unparsed`: that one has no Food whatever is created.
+                unparsed = any(p.parse_status == "unparsed" for p in evaluation.parsed)
+                hard = [c for c in evaluation.hard_failures if c != "H4" or unparsed]
                 if hard or evaluation.score < self.settings.verify.review_at:
                     problems = ", ".join(evaluation.failed_checks)
                     report.review.append(
@@ -738,13 +742,33 @@ class Pipeline:
                 recipe.ingredients, self._sources(video_key), self.settings.verify.grounding_threshold
             )
         )
+        cfg = self.settings.parse
+        unit_words = self.units.spellings() | {u.name.lower() for u in self.catalog.units}
         for index, ingredient in enumerate(recipe.ingredients):
-            engine = self.a.engine.parse(ingredient.line)
-            unit_text = engine.unit if ingredient.quantity_stated else ""
-            unit_match = self.units.match(unit_text, self.catalog.units)
-            food_match = self.foods.match(
-                engine.food or ingredient.line, self.catalog.foods, ingredient.food_original
+            line = reconcile(
+                ingredient.line,
+                self.a.engine.parse(ingredient.line),
+                ingredient.llm_parse,
+                self.units.canonical,
+                nlp_confidence=cfg.nlp_preferred_confidence,
+                food_agreement=cfg.food_agreement,
             )
+            original = ingredient.original_line or ingredient.line
+            if line.status == "unparsed":  # kept as a note; the Gate sends the recipe to review (H4)
+                result.append(
+                    ParsedIngredient(
+                        original_text=original,
+                        section=ingredient.section,
+                        quantity_stated=ingredient.quantity_stated,
+                        food_name="",
+                        note=line.note,
+                        parse_status="unparsed",
+                    )
+                )
+                continue
+            unit_text = line.unit if ingredient.quantity_stated else ""
+            unit_match = self.units.match(unit_text, self.catalog.units)
+            food_match = self.foods.match(line.food, self.catalog.foods, ingredient.food_original)
 
             unit: Unit | None = unit_match.unit
             create_here = create and index not in ungrounded
@@ -757,23 +781,30 @@ class Pipeline:
                 self._add_food_alias(food, food_match.new_alias, video_key)
 
             if ingredient.quantity_stated:
-                quantity, note = engine.quantity or 0, engine.note
+                quantity, note = line.quantity or 0, line.note
             else:
-                quantity, note = 0, engine.note or TO_TASTE
+                quantity, note = 0, line.note or TO_TASTE
+            unit_name = unit.name if unit else (unit_match.new_name or None)
+            food_name = food.name if food else food_match.new_name
             result.append(
                 ParsedIngredient(
-                    original_text=ingredient.original_line or ingredient.line,
+                    original_text=original,
                     section=ingredient.section,
                     quantity=quantity,
                     quantity_stated=ingredient.quantity_stated,
                     unit_id=unit.id if unit else None,
-                    unit_name=unit.name if unit else (unit_match.new_name or None),
+                    unit_name=unit_name,
                     food_id=food.id if food else None,
-                    food_name=food.name if food else food_match.new_name,
+                    food_name=food_name,
                     food_original=ingredient.food_original,
                     note=note,
                     food_match=food_match.kind,
                     unit_match=unit_match.kind,
+                    parse_status=line.status,
+                    suspicious=check_line(
+                        quantity, self.units.canonical(unit_name or ""), food_name, cfg, unit_words
+                    ),
+                    food_aliases=[a for a in (food.plural_name, *food.aliases) if a] if food else [],
                 )
             )
         return result

@@ -5,11 +5,22 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 SourceKind = Literal["web", "desc", "cmt", "asr", "ocr"]
+ParseStatus = Literal["agreed", "nlp_preferred", "conflict", "unparsed", "nlp_only"]
 
 
 class Evidence(BaseModel):
     source: SourceKind
     quote: str = Field(description="Verbatim substring of the cited source, in its original language.")
+
+
+class LlmParse(BaseModel):
+    """Engine B of the Ingredient Parser: the extraction call's own reading of the English line."""
+
+    quantity: float | None = Field(default=None, description="The amount; null when none is given.")
+    quantity_max: float | None = Field(default=None, description="Upper end of a range ('1-2' gives 2).")
+    unit: str | None = Field(default=None, description="One of the known unit names, or null.")
+    food: str | None = Field(default=None, description="The plain English food name, e.g. 'onion'.")
+    note: str | None = Field(default=None, description="Size, preparation and comments: 'large, diced'.")
 
 
 class ExtractedIngredient(BaseModel):
@@ -23,6 +34,7 @@ class ExtractedIngredient(BaseModel):
     section: str | None = Field(default=None, description="Section heading such as 'For the sauce'.")
     quantity_stated: bool = Field(description="False when the source never gave an amount.")
     evidence: list[Evidence]
+    llm_parse: LlmParse | None = Field(default=None, description="`line` split into its parts.")
 
 
 class ExtractedStep(BaseModel):
@@ -89,6 +101,10 @@ class ParsedIngredient(BaseModel):
     note: str = ""
     food_match: Literal["exact", "plural", "alias", "singular", "fuzzy", "new"] = "exact"
     unit_match: Literal["exact", "plural", "alias", "none", "new"] = "none"
+    # How the two parse engines compared (`nlp_only`: the extraction had no LLM parse, e.g. older data).
+    parse_status: ParseStatus = "nlp_only"
+    suspicious: list[str] = Field(default_factory=list)  # Sanity Check findings for this line
+    food_aliases: list[str] = Field(default_factory=list)  # the Food's plural and aliases, for step links
 
 
 class JudgeProblem(BaseModel):

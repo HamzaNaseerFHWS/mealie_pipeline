@@ -82,6 +82,92 @@ class FindSettings(BaseModel):
     use_claude_fallback: bool = True
 
 
+class ParseSettings(BaseModel):
+    """The `parse` stage: Reconcile thresholds and Sanity Check limits (ticket 09).
+
+    Units are the English Mealie unit names of `config/units.yaml`; foods are matched lower-case and
+    singular, on the whole name ("salt") or its last words ("coconut milk" is a liquid).
+    """
+
+    nlp_preferred_confidence: float = 0.9  # engine A wins a one-field disagreement at this confidence
+    food_agreement: float = 90  # fuzzy ratio at which the two engines' food names agree
+    # Above this many of a unit, any line is suspicious.
+    max_quantity: dict[str, float] = Field(
+        default_factory=lambda: {
+            "gram": 5000,
+            "kilogram": 5,
+            "milligram": 5000,
+            "milliliter": 5000,
+            "liter": 5,
+            "teaspoon": 20,
+            "tablespoon": 20,
+            "cup": 12,
+            "glass": 10,
+            "ounce": 64,
+            "pound": 10,
+            "quarter kilogram": 20,
+            "pinch": 10,
+            "dash": 10,
+            "handful": 10,
+            "clove": 40,
+            "slice": 30,
+            "piece": 50,
+            "bunch": 6,
+            "can": 8,
+            "sprig": 20,
+            "packet": 10,
+        }
+    )
+    # Foods that are only ever used a little: "5 kg salt" is an extraction mistake.
+    seasonings: list[str] = Field(
+        default_factory=lambda: [
+            "salt",
+            "sea salt",
+            "black pepper",
+            "pepper",
+            "chilli powder",
+            "red chilli powder",
+            "chili powder",
+            "turmeric",
+            "turmeric powder",
+            "garam masala",
+            "baking soda",
+            "baking powder",
+        ]
+    )
+    seasoning_max: dict[str, float] = Field(
+        default_factory=lambda: {
+            "gram": 100,
+            "kilogram": 0.1,
+            "teaspoon": 12,
+            "tablespoon": 6,
+            "cup": 0.5,
+            "ounce": 4,
+            "pound": 0.25,
+            "quarter kilogram": 0.4,
+        }
+    )
+    liquids: list[str] = Field(
+        default_factory=lambda: [
+            "water",
+            "milk",
+            "cream",
+            "oil",
+            "vinegar",
+            "stock",
+            "broth",
+            "juice",
+            "wine",
+            "buttermilk",
+            "syrup",
+        ]
+    )
+    # Units that count things; "" is a bare number ("2 eggs"). A liquid counted like this is suspicious.
+    count_units: list[str] = Field(
+        default_factory=lambda: ["", "piece", "slice", "clove", "sprig", "bunch", "handful"]
+    )
+
+
 class VerifySettings(BaseModel):
     """The Gate: thresholds and weights for the Quality Score (0-100)."""
 
@@ -111,6 +197,7 @@ class Settings(BaseModel):
     images: ImageSettings = Field(default_factory=ImageSettings)
     web: WebSettings = Field(default_factory=WebSettings)
     find: FindSettings = Field(default_factory=FindSettings)
+    parse: ParseSettings = Field(default_factory=ParseSettings)
     mealie_url: str | None = None
     mealie_token: SecretStr | None = None
     openai_api_key: SecretStr | None = None
@@ -123,7 +210,7 @@ class Settings(BaseModel):
 
 
 SECRET_FIELDS = {"mealie_url", "mealie_token", "openai_api_key", "openai_max_usd"}
-NESTED_SECTIONS = {"mealie", "run", "llm", "images", "verify", "web", "find"}
+NESTED_SECTIONS = {"mealie", "run", "llm", "images", "verify", "web", "find", "parse"}
 
 
 def _apply_overrides(data: dict[str, Any], overrides: Mapping[str, str | None]) -> None:
