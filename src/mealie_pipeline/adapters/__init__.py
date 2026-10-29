@@ -7,6 +7,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+from mealie_pipeline.adapters.browser import Browser, PlaywrightBrowser
 from mealie_pipeline.adapters.collectors import ListCollector, YouTubeCollector
 from mealie_pipeline.adapters.downloader import HttpImageDownloader, ImageDownloader
 from mealie_pipeline.adapters.ingredient_engine import IngredientEngine, NlpIngredientEngine
@@ -17,6 +18,7 @@ from mealie_pipeline.adapters.search import ClaudeWebSearch, DdgsSearch, WebSear
 from mealie_pipeline.adapters.system import RealSystemProbe, SystemProbe
 from mealie_pipeline.adapters.video_source import VideoSource, YtDlpVideoSource
 from mealie_pipeline.adapters.web import HttpxWebFetcher, WebFetcher
+from mealie_pipeline.sessions import cookies_file, profile_dir
 from mealie_pipeline.settings import Settings
 
 
@@ -32,6 +34,7 @@ class Adapters:
     search: WebSearch
     search_fallback: WebSearch
     collectors: dict[str, ListCollector]  # one per platform, keyed like `Video.platform`
+    browser: Browser  # the pipeline Chrome profile; only launched when something opens a page
 
 
 def build_adapters(settings: Settings, workspace: Path) -> Adapters:
@@ -72,5 +75,6 @@ def build_adapters(settings: Settings, workspace: Path) -> Adapters:
             models=settings.llm.models,
             slots=claude_slots,
         ),
-        collectors={"youtube": YouTubeCollector(videos)},
+        collectors={"youtube": YouTubeCollector(videos, cookiefile=cookies_file(workspace))},
+        browser=PlaywrightBrowser(profile_dir(workspace)),
     )

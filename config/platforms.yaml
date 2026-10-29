@@ -1,0 +1,50 @@
+# Per-platform login and stop-signal settings for `mp login` and the Browser.
+# Markers are case-insensitive substrings. A page matching a stop signal stops that platform with
+# NeedsHumanLogin; the pipeline never tries to get around it.
+#   session_cookies: all of these must be present (and unexpired) on cookie_domain to count as logged in.
+#   stop_signals.<kind>.url / title / body: any match means that kind. Checked in the order
+#   checkpoint, rate_limit, login_wall.
+
+youtube:
+  login_url: "https://accounts.google.com/ServiceLogin?service=youtube&continue=https://www.youtube.com/"
+  cookie_domain: "youtube.com"
+  session_cookies: ["SID"]
+  stop_signals:
+    checkpoint:
+      url: ["google.com/sorry/"]
+      body: ["sign in to confirm you're not a bot", "sign in to confirm you’re not a bot"]
+    rate_limit:
+      body: ["our systems have detected unusual traffic"]
+    login_wall:
+      url: ["accounts.google.com/servicelogin", "accounts.google.com/v3/signin", "accounts.google.com/signin"]
+
+instagram:
+  login_url: "https://www.instagram.com/accounts/login/"
+  cookie_domain: "instagram.com"
+  session_cookies: ["sessionid"]
+  stop_signals:
+    checkpoint:
+      url: ["/challenge/", "/accounts/suspended", "/auth_platform/"]
+      body: ["confirm it's you", "confirm it’s you", "unusual login attempt", "suspicious login attempt"]
+    rate_limit:
+      body: ["please wait a few minutes before you try again", "try again later"]
+    login_wall:
+      url: ["/accounts/login"]
+      title: ["login • instagram"]
+      body: ["id=\"loginform\""]
+
+facebook:
+  login_url: "https://www.facebook.com/login/"
+  cookie_domain: "facebook.com"
+  session_cookies: ["c_user", "xs"]
+  stop_signals:
+    checkpoint:
+      url: ["/checkpoint/"]
+      title: ["security check"]
+      body: ["confirm your identity"]
+    rate_limit:
+      body: ["you're temporarily blocked", "you’re temporarily blocked", "you can't use this feature right now"]
+    login_wall:
+      url: ["facebook.com/login"]
+      title: ["log in to facebook"]
+      body: ["you must log in to continue", "id=\"login_form\""]

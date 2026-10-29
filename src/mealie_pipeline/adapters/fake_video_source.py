@@ -1,6 +1,7 @@
 """VideoSource that answers from `info.json`-shaped fixtures and playlist listings keyed by URL."""
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from mealie_pipeline.adapters.video_source import (
@@ -22,7 +23,8 @@ class FakeVideoSource:
         self.infos = infos or {}
         self.pinned = pinned or {}
         self.playlists = playlists or {}
-        self.private: set[str] = set()  # playlist URLs that need a login
+        self.private: set[str] = set()  # playlist URLs that need a login (a cookie file)
+        self.cookiefiles: list[Path] = []  # every cookie file a listing was given
         self.calls: list[str] = []
 
     def metadata(self, url: str) -> VideoMeta:
@@ -34,9 +36,11 @@ class FakeVideoSource:
     def pinned_comments(self, url: str) -> str:
         return self.pinned.get(url, "")
 
-    def list_playlist(self, url: str) -> Iterator[PlaylistEntry]:
+    def list_playlist(self, url: str, cookiefile: Path | None = None) -> Iterator[PlaylistEntry]:
         self.calls.append(url)
-        if url in self.private:
+        if cookiefile is not None:
+            self.cookiefiles.append(cookiefile)
+        if url in self.private and cookiefile is None:
             raise LoginRequired("This playlist is private")
         if url not in self.playlists:
             raise VideoSourceError(f"FakeVideoSource has no playlist {url}")

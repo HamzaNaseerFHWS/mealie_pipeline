@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from mealie_pipeline.adapters.collectors import ListCollector
 from mealie_pipeline.adapters.video_source import LoginRequired, VideoSourceError
+from mealie_pipeline.errors import NeedsHumanLogin
 from mealie_pipeline.store import SavedList, StateStore
 from mealie_pipeline.url_normalizer import resolve
 
@@ -50,6 +51,9 @@ def sync_list(
             keys.append(key)
     except LoginRequired as err:
         result.error = login_hint(saved.platform, str(err))
+    except NeedsHumanLogin as err:  # a login wall, checkpoint or rate limit: stop, never work around it
+        detail = f"{err.kind}: {err.detail}" if err.detail else err.kind
+        result.error = f"stopped on a {err.kind} page. " + login_hint(saved.platform, detail)
     except VideoSourceError as err:
         result.error = f"could not list it: {err}"
     if result.error is not None:

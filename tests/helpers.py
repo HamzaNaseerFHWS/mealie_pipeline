@@ -5,6 +5,7 @@ from typing import Any
 from mealie_pipeline.adapters import Adapters
 from mealie_pipeline.adapters.collectors import YouTubeCollector
 from mealie_pipeline.adapters.downloader import FakeImageDownloader
+from mealie_pipeline.adapters.fake_browser import FakeBrowser
 from mealie_pipeline.adapters.fake_llm import FakeLLM
 from mealie_pipeline.adapters.fake_mealie import FakeMealie
 from mealie_pipeline.adapters.fake_search import FakeWebSearch
@@ -25,6 +26,7 @@ def fake_adapters(**overrides: Any) -> Adapters:
         "web": FakeWebFetcher(),
         "search": FakeWebSearch(),
         "search_fallback": FakeWebSearch(),
+        "browser": FakeBrowser(),
     }
     parts.update(overrides)
     parts.setdefault("collectors", {"youtube": YouTubeCollector(parts["videos"])})

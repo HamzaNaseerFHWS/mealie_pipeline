@@ -2,10 +2,19 @@
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal
 
 from mealie_pipeline.adapters import Adapters
 from mealie_pipeline.errors import MealieAuthError, MealieError, MealieUnreachableError
+from mealie_pipeline.sessions import (
+    SessionStatus,
+    cookies_file,
+    load_platforms,
+    logins_file,
+    session_statuses,
+)
 from mealie_pipeline.settings import Settings
 
 Status = Literal["ok", "fail", "warn", "skip"]
@@ -20,7 +29,9 @@ class Check:
     hint: str = ""
 
 
-def run_doctor(adapters: Adapters, settings: Settings) -> list[Check]:
+def run_doctor(
+    adapters: Adapters, settings: Settings, workspace: Path | None = None, now: datetime | None = None
+) -> list[Check]:
     system = adapters.system
     checks = [
         _python(system),
@@ -30,6 +41,8 @@ def run_doctor(adapters: Adapters, settings: Settings) -> list[Check]:
         _yt_dlp(system),
         _gpu(system),
     ]
+    if workspace is not None:
+        checks += _sessions(workspace, now or datetime.now(UTC))
     checks += _mealie(adapters, settings)
     return checks
 
@@ -87,6 +100,33 @@ def _gpu(system) -> Check:
     if name:
         return Check("ok", "NVIDIA GPU", name)
     return Check("warn", "NVIDIA GPU", "not detected (only needed for transcription from ticket 07)")
+
+
+def _sessions(workspace: Path, now: datetime) -> list[Check]:
+    """One line per platform: logged in or not, how long ago, when the session cookie expires.
+
+    Reads only cookie names and expiry dates; values never reach the output."""
+    cookies, logins = cookies_file(workspace), logins_file(workspace)
+    text = cookies.read_text(encoding="utf-8") if cookies.is_file() else None
+    seen = json.loads(logins.read_text(encoding="utf-8")) if logins.is_file() else {}
+    return [_session(s, seen) for s in session_statuses(text, seen, load_platforms(workspace), now)]
+
+
+def _session(status: SessionStatus, logins: dict[str, str]) -> Check:
+    name = f"{status.platform} session"
+    hint = f"run `mp login {status.platform}`"
+    if not status.logged_in:
+        detail = "expired" if status.platform in logins else "not logged in"
+        return Check("warn", name, f"{detail} ({hint} to collect private lists)")
+    if status.age_days is None:
+        detail = "logged in"
+    elif status.age_days == 0:
+        detail = "logged in today"
+    else:
+        detail = f"logged in {status.age_days} day{'s' if status.age_days != 1 else ''} ago"
+    if status.expires_in_days is not None:
+        detail += f", cookies expire in {status.expires_in_days} days"
+    return Check("ok", name, detail)
 
 
 def _mealie(adapters: Adapters, settings: Settings) -> list[Check]:

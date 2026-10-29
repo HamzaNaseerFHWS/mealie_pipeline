@@ -5,6 +5,7 @@ collectors (tickets 15 and 16) will use the Browser.
 """
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Protocol
 
 from mealie_pipeline.adapters.video_source import LoginRequired, PlaylistEntry, VideoSource
@@ -18,12 +19,13 @@ class ListCollector(Protocol):
 
 
 class YouTubeCollector:
-    def __init__(self, videos: VideoSource, *, logged_in: bool = False):
+    def __init__(self, videos: VideoSource, *, cookiefile: Path | None = None):
         self.videos = videos
-        self.logged_in = logged_in  # cookies for yt-dlp arrive with `mp login youtube` (ticket 14)
+        self.cookiefile = cookiefile  # `secrets/cookies.txt`, written by `mp login youtube`
 
     def enumerate(self, list_url: str) -> Iterator[PlaylistEntry]:
+        cookies = self.cookiefile if self.cookiefile is not None and self.cookiefile.is_file() else None
         normalized = normalize_list(list_url)
-        if normalized is not None and normalized.private and not self.logged_in:
+        if normalized is not None and normalized.private and cookies is None:
             raise LoginRequired(f"{normalized.list_id} is only visible to the logged-in owner")
-        yield from self.videos.list_playlist(list_url)
+        yield from self.videos.list_playlist(list_url, cookies)

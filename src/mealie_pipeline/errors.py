@@ -43,3 +43,15 @@ class MealieUnreachableError(MealieError):
         self.base_url = base_url
         suffix = f" ({detail})" if detail else ""
         super().__init__(f"cannot reach Mealie at {base_url}: is Tailscale connected?{suffix}")
+
+
+class NeedsHumanLogin(Exception):
+    """A platform showed a login wall, checkpoint or rate-limit page: only the user can go on.
+
+    The pipeline stops that platform and asks for `mp login <platform>`; it never works around it."""
+
+    def __init__(self, platform: str, kind: str, detail: str = ""):
+        super().__init__(f"{platform}: {kind}" + (f" ({detail})" if detail else ""))
+        self.platform = platform
+        self.kind = kind
+        self.detail = detail

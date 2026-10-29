@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from mealie_pipeline.models import VideoMeta
@@ -51,8 +52,10 @@ class VideoSource(Protocol):
         """Text of the creator's own pinned comment(s), or "" (many creators post the recipe there)."""
         ...
 
-    def list_playlist(self, url: str) -> Iterator[PlaylistEntry]:
-        """Every entry of a playlist, without downloading anything. Raises `LoginRequired`."""
+    def list_playlist(self, url: str, cookiefile: Path | None = None) -> Iterator[PlaylistEntry]:
+        """Every entry of a playlist, without downloading anything. Raises `LoginRequired`.
+
+        `cookiefile` is the `secrets/cookies.txt` of `mp login`, for private lists."""
         ...
 
 
@@ -121,19 +124,21 @@ class YtDlpVideoSource:
             str(c.get("text") or "") for c in comments if c.get("is_pinned") and c.get("author_is_uploader")
         )
 
-    def list_playlist(self, url: str) -> Iterator[PlaylistEntry]:
+    def list_playlist(self, url: str, cookiefile: Path | None = None) -> Iterator[PlaylistEntry]:
         import yt_dlp
         from yt_dlp.utils import DownloadError
 
         # extract_flat lists entries without visiting each Video; lazy_playlist pages through large
         # playlists as the iterator is consumed instead of loading every page first.
-        options = {
+        options: dict[str, object] = {
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
             "extract_flat": "in_playlist",
             "lazy_playlist": True,
         }
+        if cookiefile is not None:
+            options["cookiefile"] = str(cookiefile)
         try:
             with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[arg-type]
                 info = ydl.extract_info(url, download=False)

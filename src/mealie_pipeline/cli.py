@@ -1,6 +1,8 @@
 """The `mp` command line."""
 
 import signal
+import sys
+import threading
 from pathlib import Path
 from typing import Annotated
 
@@ -13,16 +15,19 @@ from mealie_pipeline.adapters import Adapters, build_adapters
 from mealie_pipeline.collect import sync_lists
 from mealie_pipeline.doctor import exit_code, render, run_doctor
 from mealie_pipeline.find import SitePolicy
+from mealie_pipeline.login import run_login
 from mealie_pipeline.pipeline import STAGES, Pipeline, RunReport
 from mealie_pipeline.recipe_requests import STATUSES as REQUEST_STATUSES
 from mealie_pipeline.recipe_requests import RecipeRequests, write_requests_report
 from mealie_pipeline.reports import STATUSES, write_report
 from mealie_pipeline.request_finder import RequestFinder
 from mealie_pipeline.request_sheet import SheetError, read_sheet
+from mealie_pipeline.sessions import load_platforms
 from mealie_pipeline.settings import Settings, load_settings
 from mealie_pipeline.store import StateStore
 from mealie_pipeline.url_normalizer import normalize, normalize_list
 
+LOGIN_POLL_SECONDS = 2.0  # how often `mp login` looks for the session cookies
 REQUEST_STAGES = ("find",)  # stages of Recipe Requests, run with `mp run --stages find`
 
 app = typer.Typer(
@@ -58,9 +63,54 @@ def main(
 def doctor(ctx: typer.Context) -> None:
     """Check the setup: tools, logins and the connection to Mealie."""
     app_ctx: AppContext = ctx.obj
-    checks = run_doctor(app_ctx.adapters, app_ctx.settings)
+    checks = run_doctor(app_ctx.adapters, app_ctx.settings, app_ctx.workspace)
     typer.echo(render(checks))
     raise typer.Exit(exit_code(checks))
+
+
+@app.command()
+def login(
+    ctx: typer.Context,
+    platform: Annotated[str, typer.Argument(help="youtube, instagram or facebook.")],
+) -> None:
+    """Log in once in the pipeline's own Chrome window; the cookies are then exported for yt-dlp."""
+    app_ctx: AppContext = ctx.obj
+    profiles = load_platforms(app_ctx.workspace)
+    profile = profiles.get(platform.lower())
+    if profile is None:
+        typer.echo(f"unknown platform {platform!r}: use one of {', '.join(profiles)}")
+        raise typer.Exit(2)
+    typer.echo(
+        f"A Chrome window opens on the {profile.label} login page (the pipeline's own profile, not your "
+        "everyday Chrome). Log in there, including 2FA. This continues by itself once you are logged in; "
+        "press Enter here to stop waiting."
+    )
+    entered = threading.Event()
+
+    def wait_for_enter() -> None:
+        try:
+            line = sys.stdin.readline()
+        except (OSError, ValueError):
+            return
+        if line:  # "" is end of input (no terminal), not a key press
+            entered.set()
+
+    threading.Thread(target=wait_for_enter, daemon=True).start()
+    result = run_login(
+        profile,
+        app_ctx.adapters.browser,
+        app_ctx.workspace,
+        pressed_enter=entered.is_set,
+        sleep=entered.wait,  # a poll ends early when Enter is pressed
+        poll_s=LOGIN_POLL_SECONDS,
+    )
+    shown = result.cookies_path.relative_to(app_ctx.workspace)
+    if not result.logged_in:
+        typer.echo(
+            f"no {profile.label} session found. Run `mp login {profile.name}` again and finish logging in."
+        )
+        raise typer.Exit(1)
+    typer.echo(f"logged in to {profile.name}; exported {result.cookie_count} cookies to {shown}")
 
 
 def _open_pipeline(app_ctx: AppContext) -> Pipeline:
