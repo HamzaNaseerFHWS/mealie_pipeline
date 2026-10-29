@@ -22,6 +22,7 @@ The user wants the recipes from their **CSV/Excel list of recipe names** in Meal
 ## Phase B: make those recipes better (re-run them in place)
 
 10. `09-dual-engine-ingredient-parsing`
+10b. `30-german-food-aliases` (done): German food names become aliases of the English Foods; fixes the German recipes' low S2 score
 11. `25-protein-tags-for-every-recipe`: also backfills protein tags on everything already in Mealie
 12. `10-full-tagging`
 13. `13-claude-pro-usage-governor`: needs wayfinder 18. Move it earlier, right after 03, if the sheet has more than about 30 names, so a Pro usage limit pauses the run instead of failing items.

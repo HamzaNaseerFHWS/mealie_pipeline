@@ -36,6 +36,26 @@ def test_ingredients_vs_steps(foods, steps, score, mentions):
     assert mentions in details
 
 
+def test_german_steps_count_the_original_names_as_used_and_listed():
+    foods = ["shell pasta", "onion", "tomato paste"]
+    originals = ["Muschelnudeln", "Zwiebel", "Tomatenmark"]
+    steps = ["Die Muschelnudeln kochen.", "Zwiebel und Tomatenmark anbraten."]
+
+    without, _ = ingredients_vs_steps(foods, steps, KNOWN)
+    with_originals, details = ingredients_vs_steps(foods, steps, KNOWN, originals)
+
+    assert without == pytest.approx(0.0)
+    assert with_originals == pytest.approx(1.0), details
+
+
+def test_a_step_food_named_only_by_an_original_name_is_not_reported_as_unlisted():
+    known = [*KNOWN, "Tomatenmark"]  # the Mealie Food list has the German word as a name or alias
+
+    score, details = ingredients_vs_steps(["tomato paste"], ["Tomatenmark rühren."], known, ["Tomatenmark"])
+
+    assert score == pytest.approx(1.0), details
+
+
 @pytest.mark.parametrize(
     ("servings", "prep", "cook", "total", "score", "mention"),
     [

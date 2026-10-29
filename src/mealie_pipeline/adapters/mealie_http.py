@@ -119,6 +119,21 @@ class MealieHttpGateway:
         data = self._request("POST", "/api/foods", json=body).json()
         return Food(id=data["id"], name=data["name"], plural_name=data.get("pluralName") or "")
 
+    def add_food_alias(self, food_id: str, alias: str) -> Food:
+        # PUT replaces the whole Food, so read it first and send everything back with the alias added.
+        data = self._request("GET", f"/api/foods/{food_id}").json()
+        aliases = [{"name": a["name"]} for a in data.get("aliases") or [] if a.get("name")]
+        if alias.casefold() not in {a["name"].casefold() for a in aliases}:
+            aliases.append({"name": alias})
+        data["aliases"] = aliases
+        data = self._request("PUT", f"/api/foods/{food_id}", json=data).json()
+        return Food(
+            id=data["id"],
+            name=data["name"],
+            plural_name=data.get("pluralName") or "",
+            aliases=[a["name"] for a in data.get("aliases") or [] if a.get("name")],
+        )
+
     def create_unit(self, name: str, abbreviation: str | None = None) -> Unit:
         # Mealie answers 422 to a null abbreviation, so a missing one is sent as "".
         body = {"name": name, "abbreviation": "" if abbreviation is None else abbreviation}

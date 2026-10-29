@@ -99,6 +99,13 @@ class FakeMealie:
         self.foods[food.id] = food
         return food
 
+    def add_food_alias(self, food_id: str, alias: str) -> Food:
+        self._auth("PUT", f"/api/foods/{food_id}")
+        food = self.foods[food_id]
+        if alias.casefold() not in {a.casefold() for a in food.aliases}:
+            food.aliases.append(alias)
+        return food.model_copy(deep=True)
+
     def create_unit(self, name: str, abbreviation: str | None = None) -> Unit:
         return self.post_unit({"name": name, "abbreviation": "" if abbreviation is None else abbreviation})
 

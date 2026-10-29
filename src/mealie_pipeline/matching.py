@@ -5,7 +5,8 @@ spelling; names the pipeline creates keep the pipeline's lower-case spelling. Th
 deliberately strict: "cumin seeds" and "cumin powder" are different foods and must not merge.
 """
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from rapidfuzz import fuzz
@@ -13,6 +14,9 @@ from rapidfuzz import fuzz
 from mealie_pipeline.adapters.mealie import Food, Unit
 
 FUZZY_THRESHOLD = 92
+MAX_ALIAS_WORDS = 3  # a longer "name" is a sentence, not a food
+# Choices ("Schnittlauch oder Petersilie"), plural markers "Tomate(n)", amounts and lists are not one food.
+_NOT_ONE_FOOD = re.compile(r"[()/,;:&+\d]|\b(oder|und|wie|bzw|or|and|aus|mit|nach)\b", re.IGNORECASE)
 # Words that make two otherwise similar foods different things.
 DISTINGUISHING = {"seed", "seeds", "powder", "oil", "paste", "sauce", "flakes", "leaves", "juice", "milk"}
 
@@ -22,6 +26,10 @@ UnitMatchKind = Literal["exact", "plural", "alias", "none", "new"]
 
 def _clean(text: str) -> str:
     return " ".join(text.lower().replace(".", " ").split())
+
+
+def _aliasable(name: str) -> bool:
+    return 0 < len(name.split()) <= MAX_ALIAS_WORDS and not _NOT_ONE_FOOD.search(name)
 
 
 def singularize(word: str) -> str:
@@ -52,6 +60,7 @@ class FoodMatch:
     kind: FoodMatchKind
     food: Food | None
     new_name: str = ""
+    new_alias: str = ""  # a source-language name the matched (or still to be created) Food should learn
 
 
 class UnitNormalizer:
@@ -90,7 +99,35 @@ class FoodMatcher:
     def __init__(self, glossary: dict[str, str] | None = None):
         self._glossary = {_clean(k): v for k, v in (glossary or {}).items()}
 
-    def match(self, name: str, foods: list[Food]) -> FoodMatch:
+    def match(self, name: str, foods: list[Food], original: str = "") -> FoodMatch:
+        """`original` is the food's name in the source's own language (empty for English sources).
+
+        A Food that already knows it wins; otherwise the English match gets it as `new_alias`.
+        """
+        original = _clean(original)
+        if original:
+            known = self._known_as(original, foods)
+            if known is not None:
+                return known
+        found = self._match_english(name, foods)
+        # A guessed (fuzzy) English match may be the wrong Food; teaching it a word would repeat the mistake.
+        if original and found.kind != "fuzzy" and _aliasable(original):
+            own = _clean(found.food.name) if found.food else found.new_name
+            if original != own:
+                return replace(found, new_alias=original)
+        return found
+
+    @staticmethod
+    def _known_as(original: str, foods: list[Food]) -> FoodMatch | None:
+        for food in foods:
+            if original == _clean(food.name):
+                return FoodMatch("exact", food)
+        for food in foods:
+            if original in {_clean(a) for a in food.aliases} | {_clean(food.plural_name)}:
+                return FoodMatch("alias", food)
+        return None
+
+    def _match_english(self, name: str, foods: list[Food]) -> FoodMatch:
         raw = _clean(name)
         raw = _clean(self._glossary.get(raw, raw))
         singular = singular_phrase(raw)

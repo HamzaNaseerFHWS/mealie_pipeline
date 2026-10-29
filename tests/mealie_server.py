@@ -72,6 +72,17 @@ class FakeMealieServer:
             return _json(self._wire(fake.create_tag(body["name"])), 201)
         if method == "POST" and path == "/api/foods":
             return _json(self._wire(fake.create_food(body["name"], body.get("pluralName"))), 201)
+        if match := re.fullmatch(r"/api/foods/([^/]+)", path):
+            food_id = match.group(1)
+            if method == "GET":
+                fake.catalog()  # auth check
+                return _json(self._wire(fake.foods[food_id]))
+            if method == "PUT":
+                food = fake.foods[food_id]
+                for alias in body.get("aliases") or []:
+                    fake.add_food_alias(food_id, alias["name"])
+                food.name = body["name"]
+                return _json(self._wire(food))
         if method == "POST" and path == "/api/units":
             return _json(self._wire(fake.post_unit(body)), 201)
         if (method, path) == ("POST", "/api/recipes"):
@@ -110,6 +121,8 @@ class FakeMealieServer:
         data = model.model_dump()
         if "plural_name" in data:
             data["pluralName"] = data.pop("plural_name")
+        if "aliases" in data:  # Mealie sends aliases as objects
+            data["aliases"] = [{"name": a} for a in data["aliases"]]
         return data
 
     def _query_recipes(self, query_filter: str) -> Response:

@@ -742,7 +742,9 @@ class Pipeline:
             engine = self.a.engine.parse(ingredient.line)
             unit_text = engine.unit if ingredient.quantity_stated else ""
             unit_match = self.units.match(unit_text, self.catalog.units)
-            food_match = self.foods.match(engine.food or ingredient.line, self.catalog.foods)
+            food_match = self.foods.match(
+                engine.food or ingredient.line, self.catalog.foods, ingredient.food_original
+            )
 
             unit: Unit | None = unit_match.unit
             create_here = create and index not in ungrounded
@@ -751,6 +753,8 @@ class Pipeline:
             food: Food | None = food_match.food
             if food_match.kind == "new" and create_here:
                 food = self._create_food(food_match.new_name, video_key)
+            if food is not None and food_match.new_alias and create_here:
+                self._add_food_alias(food, food_match.new_alias, video_key)
 
             if ingredient.quantity_stated:
                 quantity, note = engine.quantity or 0, engine.note
@@ -766,6 +770,7 @@ class Pipeline:
                     unit_name=unit.name if unit else (unit_match.new_name or None),
                     food_id=food.id if food else None,
                     food_name=food.name if food else food_match.new_name,
+                    food_original=ingredient.food_original,
                     note=note,
                     food_match=food_match.kind,
                     unit_match=unit_match.kind,
@@ -778,6 +783,12 @@ class Pipeline:
         self.catalog.foods.append(food)
         self._log_created("created_foods.csv", name, video_key)
         return food
+
+    def _add_food_alias(self, food: Food, alias: str, video_key: str) -> None:
+        """The source's own word for a Food (German "Zwiebel" for onion): later recipes link through it."""
+        updated = self.a.mealie.add_food_alias(food.id, alias)
+        food.aliases[:] = updated.aliases  # the Catalog's Food stays in step with Mealie
+        self._log_created("created_aliases.csv", f"{alias} -> {food.name}", video_key)
 
     def _create_unit(self, name: str, video_key: str) -> Unit:
         unit = self.a.mealie.create_unit(name)

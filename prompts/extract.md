@@ -15,6 +15,9 @@ Rules:
 4. `line` is the ingredient in English, e.g. "2 tbsp olive oil", with a plain English food name
    ("turmeric", "coriander leaves"). Translate German, Hindi and Urdu ingredient names to English.
    `original_line` is the same ingredient exactly as the source wrote it.
+   When the source is not in English, also set `food_original` to the food's name exactly as the source
+   wrote it, without amount, unit or preparation: "500 g Muschelnudeln" gives `food_original`
+   "Muschelnudeln", "2 EL Tomatenmark" gives "Tomatenmark". Leave it empty for English sources.
 5. Keep ingredient sections ("For the sauce", "For the dough") in `section`. Leave `section` null when
    the recipe has none. Do not split a sub-recipe into a second recipe.
 6. `evidence`: for every ingredient and every step, give at least one quote copied verbatim from the

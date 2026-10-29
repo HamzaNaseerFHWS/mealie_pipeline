@@ -14,16 +14,27 @@ def words(text: str) -> list[str]:
 
 
 def ingredients_vs_steps(
-    ingredient_foods: list[str], steps: list[str], known_foods: list[str]
+    ingredient_foods: list[str],
+    steps: list[str],
+    known_foods: list[str],
+    original_names: list[str] | None = None,
 ) -> tuple[float, str]:
     """S2. Each ingredient should be used in some step, and each known Food a step mentions should be
-    listed as an ingredient. Score = 1 - problems / ingredients (never below 0)."""
+    listed as an ingredient. Score = 1 - problems / ingredients (never below 0).
+
+    `original_names[i]` is ingredient i's name in the source's language (or empty): the steps of a
+    German recipe are German, so either spelling counts as "used" and as "listed"."""
     if not ingredient_foods:
         return 0.0, "no ingredients"
+    originals = list(original_names or []) + [""] * len(ingredient_foods)
     step_text = " ".join(steps)
     step_words = set(words(step_text))
-    unused = [f for f in ingredient_foods if not set(words(f)) & step_words]
-    listed_words = {w for f in ingredient_foods for w in words(f)}
+    unused = [
+        f
+        for f, original in zip(ingredient_foods, originals, strict=False)
+        if not (set(words(f)) | set(words(original))) & step_words
+    ]
+    listed_words = {w for f in [*ingredient_foods, *originals] for w in words(f)}
     padded = f" {' '.join(words(step_text))} "
     unlisted = sorted(
         {

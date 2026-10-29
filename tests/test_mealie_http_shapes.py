@@ -105,6 +105,19 @@ def test_unit_without_abbreviation_sends_an_empty_string_never_null(server, gate
     assert last(server).json == {"name": "handful", "abbreviation": ""}
 
 
+def test_adding_a_food_alias_reads_the_food_then_puts_it_back_with_the_alias(server, gateway):
+    food = gateway.create_food("onion")
+    gateway.add_food_alias(food.id, "Zwiebel")
+    again = gateway.add_food_alias(food.id, "zwiebel")  # same alias twice is not added twice
+    puts = [r for r in server.requests if r.method == "PUT"]
+
+    assert [r.path for r in puts] == [f"/api/foods/{food.id}"] * 2
+    assert puts[0].json["name"] == "onion"
+    assert puts[0].json["aliases"] == [{"name": "Zwiebel"}]
+    assert again.aliases == ["Zwiebel"]
+    assert gateway.catalog().foods[0].aliases == ["Zwiebel"]
+
+
 def test_non_2xx_raises_a_typed_error_with_method_path_status_and_body(gateway):
     with pytest.raises(MealieHttpError) as err:
         gateway.get_recipe("missing")

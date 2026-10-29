@@ -119,7 +119,10 @@ def evaluate(
     add(CheckResult("H5", "hard", bool(tags), None, f"{len(tags)} tags"))
 
     s2, s2_details = checks.ingredients_vs_steps(
-        [p.food_name for p in kept_parsed], [s.text for s in recipe.instructions], known_foods
+        [p.food_name for p in kept_parsed],
+        [s.text for s in recipe.instructions],
+        known_foods,
+        [p.food_original for p in kept_parsed],
     )
     s6, s6_details = checks.plausibility(
         recipe.servings, recipe.prep_minutes, recipe.cook_minutes, recipe.total_minutes

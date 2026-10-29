@@ -74,6 +74,57 @@ def test_food_matcher(name, kind, food_id, new_name):
     assert match.new_name == new_name
 
 
+@pytest.mark.parametrize(
+    ("name", "original", "kind", "food_id", "new_alias", "new_name"),
+    [
+        ("onions", "Zwiebel", "plural", "f-onion", "zwiebel", ""),  # the English match learns the word
+        ("turmeric", "Kurkuma", "exact", "f-turmeric", "kurkuma", ""),
+        ("shell pasta", "Muschelnudeln", "new", None, "muschelnudeln", "shell pasta"),  # so does a new Food
+    ],
+)
+def test_original_name_is_offered_as_an_alias_for_the_english_match(
+    name, original, kind, food_id, new_alias, new_name
+):
+    match = FoodMatcher().match(name, FOODS, original)
+
+    assert match.kind == kind
+    assert (match.food.id if match.food else None) == food_id
+    assert match.new_alias == new_alias
+    assert match.new_name == new_name
+
+
+def test_a_food_that_already_knows_the_original_name_wins_over_the_english_translation():
+    foods = [*FOODS, Food(id="f-shell", name="shell pasta", aliases=["Muschelnudeln"])]
+
+    match = FoodMatcher().match("pasta", foods, "muschelnudeln")
+
+    assert match.food is not None
+    assert (match.kind, match.food.id, match.new_alias) == ("alias", "f-shell", "")
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        "",
+        "onion",
+        "Onion",
+        "a b c d e f",
+        "Schnittlauch oder Petersilie",
+        "Tomate(n)",
+        "Pita/Fladenbrot",
+        "2 Zwiebeln",
+    ],
+)
+def test_no_alias_for_an_empty_equal_or_sentence_like_original(original):
+    assert FoodMatcher().match("onion", FOODS, original).new_alias == ""
+
+
+def test_a_fuzzy_english_match_is_never_taught_an_alias():
+    match = FoodMatcher().match("green chillies", FOODS, "Grüne Chilis")
+
+    assert (match.kind, match.new_alias) == ("fuzzy", "")
+
+
 def test_fuzzy_match_reuses_a_near_identical_name():
     match = FoodMatcher().match("tomatto", FOODS)  # a typo scoring above the fuzzy threshold
 

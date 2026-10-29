@@ -15,6 +15,11 @@ class Evidence(BaseModel):
 class ExtractedIngredient(BaseModel):
     line: str = Field(description="One ingredient, in English, e.g. '2 tbsp olive oil'.")
     original_line: str = Field(description="The same ingredient exactly as the source wrote it.")
+    food_original: str = Field(
+        default="",
+        description="Only when the source is not English: the food's name as the source wrote it, "
+        "without amount, unit or preparation, e.g. 'Muschelnudeln'. Empty for English sources.",
+    )
     section: str | None = Field(default=None, description="Section heading such as 'For the sauce'.")
     quantity_stated: bool = Field(description="False when the source never gave an amount.")
     evidence: list[Evidence]
@@ -80,6 +85,7 @@ class ParsedIngredient(BaseModel):
     unit_name: str | None = None
     food_id: str | None = None
     food_name: str
+    food_original: str = ""
     note: str = ""
     food_match: Literal["exact", "plural", "alias", "singular", "fuzzy", "new"] = "exact"
     unit_match: Literal["exact", "plural", "alias", "none", "new"] = "none"
