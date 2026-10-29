@@ -1,5 +1,7 @@
-"""The VideoSource port: yt-dlp as a library. `metadata`, `pinned_comments` and `list_playlist`."""
+"""The VideoSource port: yt-dlp as a library. `metadata`, `pinned_comments`, `subtitles` and
+`list_playlist`."""
 
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +54,10 @@ class VideoSource(Protocol):
         """Text of the creator's own pinned comment(s), or "" (many creators post the recipe there)."""
         ...
 
+    def subtitles(self, url: str) -> str:
+        """The text of the Video's subtitles (the creator's, else automatic captions), or ""."""
+        ...
+
     def list_playlist(self, url: str, cookiefile: Path | None = None) -> Iterator[PlaylistEntry]:
         """Every entry of a playlist, without downloading anything. Raises `LoginRequired`.
 
@@ -86,6 +92,41 @@ def meta_from_info(info: dict[str, Any]) -> VideoMeta:
         thumbnail=info.get("thumbnail"),
         webpage_url=info.get("webpage_url") or "",
     )
+
+
+def pick_subtitle_track(info: dict[str, Any]) -> str | None:
+    """URL of the best text track: the creator's subtitles before automatic captions, the Video's own
+    language before English before anything else, WebVTT when offered."""
+    language = str(info.get("language") or "")
+    for tracks in (info.get("subtitles") or {}, info.get("automatic_captions") or {}):
+        names = [n for n in tracks if n != "live_chat"]
+        if not names:
+            continue
+        ranked = sorted(
+            names,
+            key=lambda n: (
+                not (language and n.split("-")[0] == language),
+                not n.endswith("-orig"),
+                not n.startswith("en"),
+            ),
+        )
+        formats = tracks[ranked[0]] or []
+        chosen = next((f for f in formats if f.get("ext") == "vtt"), formats[0] if formats else None)
+        if chosen and chosen.get("url"):
+            return str(chosen["url"])
+    return None
+
+
+def vtt_text(vtt: str) -> str:
+    """Plain text of a WebVTT file: no header, cue timings or tags, no repeated lines."""
+    lines: list[str] = []
+    for raw in vtt.splitlines():
+        line = re.sub(r"<[^>]+>", "", raw).strip()
+        if not line or line == "WEBVTT" or "-->" in line or re.match(r"^(Kind|Language|NOTE)\b", line):
+            continue
+        if not lines or lines[-1] != line:
+            lines.append(line)
+    return "\n".join(lines)
 
 
 class YtDlpVideoSource:
@@ -123,6 +164,22 @@ class YtDlpVideoSource:
         return "\n\n".join(
             str(c.get("text") or "") for c in comments if c.get("is_pinned") and c.get("author_is_uploader")
         )
+
+    def subtitles(self, url: str) -> str:
+        import yt_dlp
+        from yt_dlp.utils import DownloadError
+
+        options = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[arg-type]
+                info = ydl.extract_info(url, download=False)
+                track = pick_subtitle_track(dict(info or {}))
+                if track is None:
+                    return ""
+                body = ydl.urlopen(track).read().decode("utf-8", errors="replace")
+        except (DownloadError, OSError) as err:
+            raise VideoSourceError(str(err)) from err
+        return vtt_text(body)
 
     def list_playlist(self, url: str, cookiefile: Path | None = None) -> Iterator[PlaylistEntry]:
         import yt_dlp

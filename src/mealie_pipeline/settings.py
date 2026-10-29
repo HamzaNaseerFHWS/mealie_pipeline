@@ -82,6 +82,15 @@ class FindSettings(BaseModel):
     use_claude_fallback: bool = True
 
 
+class ClassifySettings(BaseModel):
+    """The `classify` stage: is a Video a recipe?"""
+
+    confidence_threshold: float = Field(default=0.7, ge=0, le=1)  # below this, escalate once / review
+    batch_size: int = Field(default=20, ge=1)  # Videos per classifier call
+    caption_chars: int = 1500  # of each caption/description sent to the classifier
+    subtitle_chars: int = 4000  # of the subtitles sent when a Video is escalated
+
+
 class VerifySettings(BaseModel):
     """The Gate: thresholds and weights for the Quality Score (0-100)."""
 
@@ -111,6 +120,7 @@ class Settings(BaseModel):
     images: ImageSettings = Field(default_factory=ImageSettings)
     web: WebSettings = Field(default_factory=WebSettings)
     find: FindSettings = Field(default_factory=FindSettings)
+    classify: ClassifySettings = Field(default_factory=ClassifySettings)
     mealie_url: str | None = None
     mealie_token: SecretStr | None = None
     openai_api_key: SecretStr | None = None
@@ -123,7 +133,7 @@ class Settings(BaseModel):
 
 
 SECRET_FIELDS = {"mealie_url", "mealie_token", "openai_api_key", "openai_max_usd"}
-NESTED_SECTIONS = {"mealie", "run", "llm", "images", "verify", "web", "find"}
+NESTED_SECTIONS = {"mealie", "run", "llm", "images", "verify", "web", "find", "classify"}
 
 
 def _apply_overrides(data: dict[str, Any], overrides: Mapping[str, str | None]) -> None:

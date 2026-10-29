@@ -74,6 +74,7 @@ def test_videos_added_before_saved_lists_existed_keep_their_url(tmp_path):
     store.db.executescript(
         "DROP TABLE list_members; DROP TABLE video_urls; DROP TABLE saved_lists;"
         " ALTER TABLE videos DROP COLUMN early_json;"
+        " ALTER TABLE videos DROP COLUMN classification_json;"  # migration 7 came later still
         " INSERT INTO videos (video_key, platform, video_id, url, canonical_url, added_at)"
         " VALUES ('youtube:a', 'youtube', 'a', 'https://youtu.be/a', 'c', '2026-01-01');"
     )

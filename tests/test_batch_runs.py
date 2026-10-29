@@ -6,10 +6,10 @@ import json
 
 import pytest
 
-from mealie_pipeline.adapters.fake_llm import FakeLLM
 from mealie_pipeline.errors import MealieHttpError
 from mealie_pipeline.pipeline import Pipeline
 from mealie_pipeline.settings import load_settings
+from tests.helpers import non_classify_calls, recipe_llm
 from tests.images import make_jpeg
 from tests.test_pipeline_seam import (
     ITEM_KEY,
@@ -48,7 +48,7 @@ def world(tmp_path) -> World:
 
 @pytest.fixture
 def three(world: World) -> tuple[World, list[str]]:
-    world.llm = FakeLLM()  # drop the single-video script; every Video here has its own
+    world.llm = recipe_llm()  # drop the single-video script; every Video here has its own
     urls = [
         add_video(world, vid, name)
         for vid, name in [("AAAAAAAAAAA", "Dal"), ("BBBBBBBBBBB", "Rice"), ("CCCCCCCCCCC", "Naan")]
@@ -109,9 +109,9 @@ def test_limit_processes_a_batch_and_the_next_run_continues_where_it_stopped(thr
     assert second.exit_code == 0, second.output
     assert names(world) == ["Dal", "Naan", "Rice"]
 
-    calls = len(world.llm.calls)
+    calls = len(non_classify_calls(world.llm))
     world.invoke("run", "--limit", "2")
-    assert len(world.llm.calls) == calls == 3  # each Video was extracted exactly once
+    assert len(non_classify_calls(world.llm)) == calls == 3  # each Video was extracted exactly once
 
 
 def test_one_failing_video_never_stops_the_others(three):
@@ -151,7 +151,7 @@ def test_a_cancel_mid_batch_finishes_the_current_item_and_a_rerun_uploads_nothin
 
     assert resumed.exit_code == 0, resumed.output
     assert names(world) == ["Dal", "Naan", "Rice"]
-    assert len(world.llm.calls) == 3
+    assert len(non_classify_calls(world.llm)) == 3
     slugs = [r["slug"] for r in world.mealie.recipes.values()]
     assert len(slugs) == len(set(slugs))
 
@@ -239,7 +239,7 @@ def test_a_failed_upload_is_retried_successfully_once_mealie_is_fixed(world: Wor
     assert fixed.exit_code == 0, fixed.output
     assert len(world.mealie.recipes) == 1  # the half-created shell from the failed attempt was reused
     assert world.store().stage_status("part", ITEM_KEY, "upload") == "done"
-    assert len(world.llm.calls) == 1  # only upload was redone, not the paid extraction
+    assert len(non_classify_calls(world.llm)) == 1  # only upload was redone, not the paid extraction
 
 
 def test_retry_by_video_key_and_with_an_explicit_stage(world: World):
@@ -273,7 +273,7 @@ def test_reset_extract_then_run_in_update_mode_patches_the_same_recipe(world: Wo
     slug = next(iter(world.mealie.recipes))
     improved = load("llm_extract_okra.json")
     improved["name"] = "Bhindi Aloo, improved"
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
     world.llm.script("extract", improved)
 
     assert world.invoke("reset", "extract").exit_code == 0
@@ -295,14 +295,14 @@ def test_reset_failed_only_leaves_finished_items_alone(three):
     world.llm._scripts.insert(0, world.llm._scripts.pop())
     world.invoke("add", *urls)
     world.invoke("run")
-    calls = len(world.llm.calls)
+    calls = len(non_classify_calls(world.llm))
 
     world.llm._scripts.pop(0)  # the problem is fixed
     result = world.invoke("reset", "extract", "--failed-only")
     again = world.invoke("run")
 
     assert result.exit_code == 0 and again.exit_code == 0, again.output
-    assert len(world.llm.calls) == calls + 1  # only the failed Video was extracted again
+    assert len(non_classify_calls(world.llm)) == calls + 1  # only the failed Video was extracted again
     assert names(world) == ["Dal", "Naan", "Rice"]
 
 
@@ -327,7 +327,8 @@ def test_report_has_one_row_per_recipe_part_and_one_per_video_without_parts(thre
     with (world.workspace / "reports" / "report.csv").open(encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert list(rows[0]) == [
-        "item_key", "video_url", "platform", "metadata_status", "linkcheck_status", "scrape_status",
+        "item_key", "video_url", "platform", "metadata_status", "classify_status", "linkcheck_status",
+        "scrape_status",
         "extract_status",
         "parse_status",
         "tag_status", "verify_status", "upload_status", "score", "outcome", "failed_checks",

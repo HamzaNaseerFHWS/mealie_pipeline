@@ -19,10 +19,13 @@ class FakeVideoSource:
         infos: dict[str, dict[str, Any]] | None = None,
         pinned: dict[str, str] | None = None,
         playlists: dict[str, list[PlaylistEntry]] | None = None,
+        subtitles: dict[str, str] | None = None,
     ):
         self.infos = infos or {}
         self.pinned = pinned or {}
         self.playlists = playlists or {}
+        self.subtitle_texts = subtitles or {}
+        self.subtitle_calls: list[str] = []
         self.private: set[str] = set()  # playlist URLs that need a login (a cookie file)
         self.cookiefiles: list[Path] = []  # every cookie file a listing was given
         self.calls: list[str] = []
@@ -35,6 +38,10 @@ class FakeVideoSource:
 
     def pinned_comments(self, url: str) -> str:
         return self.pinned.get(url, "")
+
+    def subtitles(self, url: str) -> str:
+        self.subtitle_calls.append(url)
+        return self.subtitle_texts.get(url, "")
 
     def list_playlist(self, url: str, cookiefile: Path | None = None) -> Iterator[PlaylistEntry]:
         self.calls.append(url)

@@ -5,7 +5,7 @@ import csv
 
 import pytest
 
-from mealie_pipeline.adapters.fake_llm import FakeLLM
+from tests.helpers import non_classify_calls, recipe_llm
 from tests.test_pipeline_seam import (
     ITEM_KEY,
     World,
@@ -46,12 +46,12 @@ def with_changes(**changes):
 
 
 def script(world: World, recipe, **kwargs):
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
     world.llm.script("extract", recipe, **kwargs)
 
 
 def tasks(world: World):
-    return [c.task for c in world.llm.calls]
+    return [c.task for c in non_classify_calls(world.llm)]
 
 
 def run(world: World, *args: str):
@@ -107,8 +107,11 @@ def test_a_recipe_with_one_ingredient_is_retried_once_then_held_back_for_review(
     assert "REVIEW" in result.output and "H2" in result.output
     assert world.mealie.recipes == {}  # nothing uploaded
     # One retry: the second call is the strongest tier and carries the findings.
-    assert [c.tier for c in world.llm.calls] == ["strong", "strongest"]
-    assert "H2" in world.llm.calls[1].prompt and "failed verification" in world.llm.calls[1].prompt
+    assert [c.tier for c in non_classify_calls(world.llm)] == ["strong", "strongest"]
+    assert (
+        "H2" in non_classify_calls(world.llm)[1].prompt
+        and "failed verification" in non_classify_calls(world.llm)[1].prompt
+    )
     store = world.store()
     assert store.stage_status("part", ITEM_KEY, "verify") == "review"
     assert store.stage_status("part", ITEM_KEY, "upload") is None
@@ -127,11 +130,11 @@ def test_a_recipe_with_one_ingredient_is_retried_once_then_held_back_for_review(
 def test_a_rerun_does_not_retry_or_upload_a_held_back_recipe(world: World):
     script(world, with_changes(ingredients=[ingredient("250 g okra (bhindi)")]))
     run(world)
-    calls = len(world.llm.calls)
+    calls = len(non_classify_calls(world.llm))
 
     again = world.invoke("run")
 
-    assert again.exit_code == 0 and len(world.llm.calls) == calls
+    assert again.exit_code == 0 and len(non_classify_calls(world.llm)) == calls
     assert world.mealie.recipes == {}
 
 
@@ -169,7 +172,7 @@ def test_a_recipe_scoring_between_60_and_79_uploads_with_the_review_tag(world: W
     assert verify["outcome"] == "upload_review"
     assert "S2" in verify["failed_checks"] and "S7" in verify["failed_checks"]
     assert tasks(world) == ["extract", "judge"]
-    assert world.llm.calls[1].tier == "strong"
+    assert non_classify_calls(world.llm)[1].tier == "strong"
     recipe = next(iter(world.mealie.recipes.values()))
     assert [t["name"] for t in recipe["tags"]] == ["Dinner", "Vegan", "To Review"]
     assert [t.name for t in world.mealie.tags.values()].count("To Review") == 1

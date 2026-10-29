@@ -1,5 +1,8 @@
-"""Scripted LLMBackend: responses matched by task and a prompt substring; calls are recorded."""
+"""Scripted LLMBackend: responses matched by task and a prompt substring; calls are recorded.
 
+A response is a dict, an exception to raise, or a function of the prompt that returns the dict."""
+
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,12 +18,15 @@ class LLMCall:
     tier: Tier
 
 
+Response = dict[str, Any] | Exception | Callable[[str], dict[str, Any]]
+
+
 class FakeLLM:
     def __init__(self) -> None:
         self.calls: list[LLMCall] = []
-        self._scripts: list[tuple[str, str, dict[str, Any] | Exception]] = []
+        self._scripts: list[tuple[str, str, Response]] = []
 
-    def script(self, task: str, response: dict[str, Any] | Exception, *, when_prompt_has: str = "") -> None:
+    def script(self, task: str, response: Response, *, when_prompt_has: str = "") -> None:
         self._scripts.append((task, when_prompt_has, response))
 
     def complete(
@@ -31,5 +37,5 @@ class FakeLLM:
             if scripted_task == task and needle in prompt:
                 if isinstance(response, Exception):
                     raise response
-                return response
+                return response(prompt) if callable(response) else response
         raise LLMError(f"FakeLLM has no script for task {task!r}")
