@@ -10,7 +10,7 @@ How it works:
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `spec.md` module 5; `PIPELINE_SPEC.md` §3.2; wayfinder ticket `05-what-counts-as-a-recipe.md`.
 
