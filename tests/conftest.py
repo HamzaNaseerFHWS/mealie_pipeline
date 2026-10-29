@@ -16,6 +16,25 @@ TOKEN = "test-token-1234567890"
 GatewayFactory = Callable[..., MealieGateway]
 
 
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Leaves out `mealie_live` tests unless `-m` asks for them (`uv run pytest -m mealie_live`).
+
+    This used to be `addopts = -m 'not mealie_live'`, but any `-m` turns off pytest-testmon's
+    selection of the tests affected by a change."""
+    if config.getoption("markexpr"):
+        return
+    live = [item for item in items if item.get_closest_marker("mealie_live")]
+    if live:
+        config.hook.pytest_deselected(items=live)
+        items[:] = [item for item in items if not item.get_closest_marker("mealie_live")]
+
+
+@pytest.fixture(scope="session")
+def httpserver_listen_address() -> tuple[str, int]:
+    """127.0.0.1, not `localhost`: on Windows `localhost` tries IPv6 first and every request waits ~2 s."""
+    return ("127.0.0.1", 0)
+
+
 @pytest.fixture
 def unique() -> Callable[[str], str]:
     """Unique `zz-it-<prefix>-<uuid>` names, so live runs never collide with real data."""

@@ -32,6 +32,7 @@ dev = [
     "ruff>=0.5",
     "pyright>=1.1.370",
     "types-pyyaml",
+    "pytest-testmon>=2.2.0",
 ]
 
 [build-system]
@@ -58,5 +59,4 @@ pythonVersion = "3.12"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not mealie_live'"
 markers = ["mealie_live: runs against a real Mealie (set MEALIE_IT_URL and MEALIE_IT_TOKEN); never in CI"]
