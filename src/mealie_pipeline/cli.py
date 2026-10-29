@@ -17,6 +17,8 @@ from mealie_pipeline.doctor import exit_code, render, run_doctor
 from mealie_pipeline.find import SitePolicy
 from mealie_pipeline.login import run_login
 from mealie_pipeline.pipeline import STAGES, Pipeline, RunReport
+from mealie_pipeline.protein import ProteinRules
+from mealie_pipeline.protein_backfill import recipes_gained, run_backfill
 from mealie_pipeline.recipe_requests import STATUSES as REQUEST_STATUSES
 from mealie_pipeline.recipe_requests import RecipeRequests, write_requests_report
 from mealie_pipeline.reports import STATUSES, write_report
@@ -408,6 +410,8 @@ def status(ctx: typer.Context) -> None:
     skipped = sum(n for (_stage, state), n in counts.items() if state == "already_in_mealie")
     upgraded = sum(n for (_stage, state), n in counts.items() if state == "upgraded_existing")
     console.print(f"Already in Mealie: {skipped}   Upgraded existing: {upgraded}")
+    gained = recipes_gained(ctx.obj.workspace)
+    console.print(f"Protein Tags: {gained} recipes gained one through `mp tags protein --apply`")
     errors = store.recent_errors(10)
     if errors:
         console.print("\nRecent errors:")
@@ -466,6 +470,52 @@ def report(ctx: typer.Context) -> None:
     app_ctx: AppContext = ctx.obj
     path = write_report(_open_pipeline(app_ctx).store, app_ctx.workspace)
     typer.echo(f"wrote {path}")
+
+
+tags_app = typer.Typer(help="Tags across every recipe already in Mealie.")
+app.add_typer(tags_app, name="tags")
+
+
+@tags_app.command("protein")
+def tags_protein(
+    ctx: typer.Context,
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Create missing Protein Tags and PATCH recipes.")
+    ] = False,
+    llm_check: Annotated[
+        bool, typer.Option("--llm-check", help="Ask Claude (fast tier) about recipes the rules can't settle.")
+    ] = False,
+) -> None:
+    """Give every recipe in Mealie its Protein Tags. A dry run (reports/protein_tags.csv) unless --apply."""
+    app_ctx: AppContext = ctx.obj
+    config = app_ctx.workspace / "config" / "protein_tags.yaml"
+    if not config.is_file():
+        typer.echo(f"{config} is missing: it holds the approved Protein Tags.")
+        raise typer.Exit(2)
+    pipeline = _open_pipeline(app_ctx)
+    result = run_backfill(
+        app_ctx.adapters.mealie,
+        app_ctx.adapters.llm,
+        ProteinRules.load(config),
+        app_ctx.workspace,
+        apply=apply,
+        llm_check=llm_check,
+        now=pipeline.now,
+    )
+    for warning in result.warnings:
+        typer.echo(f"warning: {warning}")
+    for slug in result.locked:
+        typer.echo(f"locked: {slug} (skipped)")
+    for slug in result.failed:
+        typer.echo(f"failed: {slug}")
+    if result.created_tags:
+        typer.echo(f"created tags: {', '.join(result.created_tags)}")
+    verb = "gained" if apply else "would gain"
+    typer.echo(f"{len(result.gained)} recipes {verb} a Protein Tag; wrote {result.csv_path}")
+    if not apply:
+        typer.echo("Nothing in Mealie changed. Check the CSV (the override column), then run with --apply.")
+    if result.failed:
+        raise typer.Exit(1)
 
 
 requests_app = typer.Typer(help="Recipe Requests: a one-off sheet of recipe names to find and import.")

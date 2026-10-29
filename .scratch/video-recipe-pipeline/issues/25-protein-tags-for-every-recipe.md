@@ -47,7 +47,7 @@
 
 **Blocked by:** 01
 
-**Status:** in-progress
+**Status:** done
 
 **Read first:** `spec.md` modules 3 (`MealieGateway`) and 11 (Tagger); ticket 10; wayfinder ticket 20 (tag taxonomy). The protein list is part of its "ingredient types" dimension. Ticket 01's Comments cover the live-instance findings (v3.22.0, case-insensitive catalog names).
 
@@ -77,3 +77,36 @@
 - [ ] `mp status` / the run summary shows how many recipes gained a Protein Tag.
 
 **Manual check on the laptop (user):** run `uv run mp tags protein` and look through `reports/protein_tags.csv`. Fix any rows with the `override` column. Once wayfinder 20 has confirmed the tag names, run `uv run mp tags protein --apply` and spot-check a few recipes in Mealie.
+
+## Comments
+
+**Built**
+
+- `config/protein_tags.yaml`: the starter Protein Tag list from the table above (15 tags), with English, German and desi words per tag, an `exclude` list (stock, broth, fish sauce, green beans, egg noodles, besan, ...), `not_main` markers (optional, garnish, to serve, zum Garnieren, ...) and a `sweet` section (dessert/baking/drink tags and name words; Egg, Cheese and Paneer don't count there unless named). Words ending in `*` match German compounds by their stem (`hähnchen*`, `linsen*`). The longest phrase wins, so "chana dal" is Lentils and "goat cheese" is Cheese.
+- `src/mealie_pipeline/protein.py` (pure): `detect(RecipeText, ProteinRules) -> {tag: [trigger words]}`, `mealie_recipe_text(recipe)` (linked Food names, plus `note`/`originalText`/`display` for unparsed imports, plus the name and existing tags), and `tag_key()`, the one shared case-, space- and punctuation-insensitive tag-name rule (ticket 10 should reuse it).
+- `src/mealie_pipeline/protein_backfill.py` + `mp tags protein [--apply] [--llm-check]`:
+  - dry run by default: writes `reports/protein_tags.csv` (slug, name, link, current tags, proposed tags, triggers, override, result). Nothing in Mealie changes.
+  - `--apply` creates only the Protein Tags some recipe needs and Mealie lacks (matched by `tag_key`, so an existing `chicken` is reused, never duplicated), each once, then PATCHes `{"tags": current + new}`. It never removes a tag and never PUTs.
+  - Overrides: `-Lentils` removes, `+Egg` (or plain `Egg`) adds, `block` means no Protein Tag; separate entries with `,` or `;`. Only names from the list are accepted; others are noted in `result`. Overrides are read back and kept on every run.
+  - Locked recipes (`settings.locked`) are skipped and listed; a failed read or PATCH is listed and the run goes on (exit code 1 when anything failed). A second `--apply` makes no writes.
+  - `--llm-check`: recipes with no candidate, more than 3, or only unparsed ingredients go to the `fast` tier in batches of 20 (`prompts/protein_tags.md`). The schema's `tags` is an enum of the list, and answers are filtered to listed names again. They replace the rule's guess (`triggers` says `llm`), and overrides still win.
+  - Applied changes are appended to `reports/protein_tags_applied.csv`. `mp status` shows "Protein Tags: N recipes gained one", and the command prints how many recipes gained (or would gain) a tag.
+- Tag stage: `_choose_tags` now adds the detected Protein Tags (Rule Tags, always kept within the 6-tag cap) when the tag already exists in Mealie. LLM tag matching uses `tag_key`. The tag stage never creates Protein Tags; the backfill does.
+- `FakeMealie` recipes now carry `settings.locked` like real Mealie, covered by a new shared contract test (fake, HTTP shape, opt-in live).
+
+**Tests:** `tests/test_protein_pure.py` (cases a–l from the ticket plus exclusions, optional lines, dessert tags, compounds and the tag-name rule) and `tests/test_protein_tags_seam.py` (dry run with zero writes, apply keeps existing tags, tags created once, second apply zero writes, remove/add/block overrides kept, locked skipped, failed PATCH doesn't stop the run, `--llm-check` batching/enum through `FakeLLM`'s call log, `mp status`, a new upload carrying `Chicken`).
+
+**Deferred / notes**
+
+- Ticket 10 (full tagging) isn't done yet. When it lands, it should move this into its Rule Tags and contradiction logic and keep using `protein.detect` and `tag_key`.
+- Tag names are still the starter list until wayfinder 20 confirms them. If names change, edit `config/protein_tags.yaml` before the first `--apply`.
+- New pipeline uploads only get a Protein Tag that already exists in Mealie, so run the backfill `--apply` once to create the tags.
+
+**Manual check on the laptop**
+
+1. Dry run against the real Mealie: `uv run mp tags protein`. It should list every recipe and change nothing. Open `reports/protein_tags.csv` and look through `proposed_tags` and `triggers`, especially old imports, desserts (no Egg/Cheese), soups with stock (no Chicken) and desi dishes.
+2. Fix wrong rows in the `override` column (`-Tag`, `+Tag`, `block`) and save. Re-run the dry run: the overrides stay and `result` reflects them. For words that are wrong for many recipes, edit `config/protein_tags.yaml` instead.
+3. Optional: `uv run mp tags protein --llm-check` and check the rows whose `triggers` say `llm`.
+4. Once wayfinder 20 has confirmed the names: `uv run mp tags protein --apply`. Check "created tags" in the output (only names from the list), then spot-check 3–4 recipes in Mealie: their old tags are still there, plus the Protein Tag(s).
+5. Run `uv run mp tags protein --apply` again: "0 recipes gained a Protein Tag", and nothing changes. `uv run mp status` shows the Protein Tags count.
+6. Optional: `uv run pytest -m mealie_live -k locked` with `MEALIE_IT_URL`/`MEALIE_IT_TOKEN` set, to confirm that real recipes carry `settings.locked`.

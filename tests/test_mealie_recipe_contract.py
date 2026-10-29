@@ -156,3 +156,9 @@ def test_recipe_url_uses_the_group_slug(gateway, recipe):
     group = gateway.whoami().group_slug
     url = gateway.recipe_url(recipe)
     assert url.endswith(f"/g/{group}/r/{recipe}")
+
+
+def test_a_recipe_reads_back_with_its_tags_ingredients_and_locked_setting(gateway, recipe):
+    stored = gateway.get_recipe(recipe)
+    assert stored["tags"] == [] and stored["recipeIngredient"] == []
+    assert stored["settings"]["locked"] is False

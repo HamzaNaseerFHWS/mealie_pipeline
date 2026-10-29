@@ -141,6 +141,7 @@ class FakeMealie:
             "tags": [],
             "recipeIngredient": [],
             "recipeInstructions": [],
+            "settings": {"public": True, "locked": False},
         }
         return slug
 
