@@ -1,6 +1,7 @@
 """The State Store: `pipeline.db`, the only place the pipeline remembers anything.
 
-Entities: Videos, Recipe Parts and Stage Records. Migrations are versioned and applied on open.
+Entities: Saved Lists (with their memberships), Videos, Recipe Parts and Stage Records.
+Migrations are versioned and applied on open.
 Public queries are what tests assert on.
 """
 
@@ -94,6 +95,34 @@ MIGRATIONS = [
     """,
     # Migration 5 (ticket 28): the Item Key of the Recipe Part a found request became.
     "ALTER TABLE recipe_requests ADD COLUMN item_key TEXT;",
+    # Migration 6 (ticket 04): Saved Lists, which Videos each holds, every URL form a Video was seen
+    # under, and the early metadata a flat playlist listing gives for free.
+    """
+    CREATE TABLE saved_lists (
+        list_key TEXT PRIMARY KEY,
+        platform TEXT NOT NULL,
+        url TEXT NOT NULL,
+        title TEXT,
+        added_at TEXT NOT NULL,
+        last_synced TEXT,
+        sync_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT
+    );
+    CREATE TABLE list_members (
+        list_key TEXT NOT NULL REFERENCES saved_lists(list_key),
+        video_key TEXT NOT NULL REFERENCES videos(video_key),
+        first_sync INTEGER NOT NULL,
+        last_sync INTEGER NOT NULL,
+        PRIMARY KEY (list_key, video_key)
+    );
+    CREATE TABLE video_urls (
+        video_key TEXT NOT NULL REFERENCES videos(video_key),
+        url TEXT NOT NULL,
+        PRIMARY KEY (video_key, url)
+    );
+    ALTER TABLE videos ADD COLUMN early_json TEXT;
+    INSERT OR IGNORE INTO video_urls (video_key, url) SELECT video_key, url FROM videos;
+    """,
 ]
 
 PART_JSON_FIELDS = {"extracted", "parsed", "tags", "verify"}
@@ -108,6 +137,20 @@ class Video:
     url: str
     canonical_url: str
     metadata: dict[str, Any] | None
+    early: dict[str, Any] | None = None  # title/channel/duration from a list listing, before `metadata`
+
+
+@dataclass(frozen=True)
+class SavedList:
+    list_key: str
+    platform: str
+    url: str
+    title: str | None
+    added_at: str
+    last_synced: str | None
+    sync_count: int
+    item_count: int
+    last_error: str | None
 
 
 @dataclass(frozen=True)
@@ -197,8 +240,26 @@ class StateStore:
             " VALUES (?, ?, ?, ?, ?, ?)",
             (video_key, platform, video_id, url, canonical_url, _now()),
         )
+        self._db.execute("INSERT OR IGNORE INTO video_urls (video_key, url) VALUES (?, ?)", (video_key, url))
         self._db.commit()
         return cursor.rowcount == 1
+
+    def add_video_url(self, video_key: str, url: str) -> None:
+        """Remembers another URL form the Video was seen under."""
+        self._db.execute("INSERT OR IGNORE INTO video_urls (video_key, url) VALUES (?, ?)", (video_key, url))
+        self._db.commit()
+
+    def video_urls(self, video_key: str) -> list[str]:
+        rows = self._db.execute(
+            "SELECT url FROM video_urls WHERE video_key = ? ORDER BY url", (video_key,)
+        ).fetchall()
+        return [r["url"] for r in rows]
+
+    def set_early_metadata(self, video_key: str, early: dict[str, Any]) -> None:
+        self._db.execute(
+            "UPDATE videos SET early_json = ? WHERE video_key = ?", (json.dumps(early), video_key)
+        )
+        self._db.commit()
 
     def set_metadata(self, video_key: str, metadata: dict[str, Any]) -> None:
         self._db.execute(
@@ -217,11 +278,89 @@ class StateStore:
             row["url"],
             row["canonical_url"],
             _loads(row["metadata_json"]),
+            _loads(row["early_json"]),
         )
 
     def videos(self) -> list[Video]:
         keys = self._db.execute("SELECT video_key FROM videos ORDER BY added_at, video_key").fetchall()
         return [self.video(r["video_key"]) for r in keys]
+
+    # -- saved lists ----------------------------------------------------------------------
+
+    def add_list(self, list_key: str, platform: str, url: str) -> bool:
+        """Registers a Saved List; False when its List Key is already known."""
+        cursor = self._db.execute(
+            "INSERT OR IGNORE INTO saved_lists (list_key, platform, url, added_at) VALUES (?, ?, ?, ?)",
+            (list_key, platform, url, _now()),
+        )
+        self._db.commit()
+        return cursor.rowcount == 1
+
+    def saved_lists(self) -> list[SavedList]:
+        rows = self._db.execute(
+            "SELECT s.*, (SELECT COUNT(*) FROM list_members m WHERE m.list_key = s.list_key) AS items"
+            " FROM saved_lists s ORDER BY s.added_at, s.list_key"
+        ).fetchall()
+        return [
+            SavedList(
+                r["list_key"],
+                r["platform"],
+                r["url"],
+                r["title"],
+                r["added_at"],
+                r["last_synced"],
+                r["sync_count"],
+                r["items"],
+                r["last_error"],
+            )
+            for r in rows
+        ]
+
+    def record_sync(self, list_key: str, video_keys: list[str]) -> list[str]:
+        """Stores one successful sync of a Saved List; returns the Video Keys new to this list.
+
+        Membership is kept per list; a Video that is no longer listed keeps its membership (removal
+        is never propagated) but its `last_sync` stays behind."""
+        number = (
+            self._db.execute("SELECT sync_count FROM saved_lists WHERE list_key = ?", (list_key,)).fetchone()[
+                "sync_count"
+            ]
+            + 1
+        )
+        new = []
+        for key in dict.fromkeys(video_keys):
+            cursor = self._db.execute(
+                "INSERT INTO list_members (list_key, video_key, first_sync, last_sync) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (list_key, video_key) DO UPDATE SET last_sync = excluded.last_sync"
+                " RETURNING first_sync",
+                (list_key, key, number, number),
+            )
+            if cursor.fetchone()["first_sync"] == number:
+                new.append(key)
+        self._db.execute(
+            "UPDATE saved_lists SET sync_count = ?, last_synced = ?, last_error = NULL WHERE list_key = ?",
+            (number, _now(), list_key),
+        )
+        self._db.commit()
+        return new
+
+    def record_sync_error(self, list_key: str, error: str) -> None:
+        self._db.execute("UPDATE saved_lists SET last_error = ? WHERE list_key = ?", (error, list_key))
+        self._db.commit()
+
+    def new_in_last_sync(self, list_key: str) -> list[str]:
+        rows = self._db.execute(
+            "SELECT m.video_key FROM list_members m JOIN saved_lists s ON s.list_key = m.list_key"
+            " WHERE m.list_key = ? AND m.first_sync = s.sync_count ORDER BY m.video_key",
+            (list_key,),
+        ).fetchall()
+        return [r["video_key"] for r in rows]
+
+    def memberships(self, video_key: str) -> list[str]:
+        rows = self._db.execute(
+            "SELECT list_key FROM list_members WHERE video_key = ? ORDER BY list_key", (video_key,)
+        ).fetchall()
+        return [r["list_key"] for r in rows]
 
     # -- recipe parts ---------------------------------------------------------------------
 

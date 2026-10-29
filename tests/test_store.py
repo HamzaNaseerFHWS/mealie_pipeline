@@ -65,3 +65,23 @@ def test_two_stores_on_one_file_can_write_at_the_same_time(tmp_path):
 
     assert errors == []
     assert len(StateStore(path).videos()) == 200
+
+
+def test_videos_added_before_saved_lists_existed_keep_their_url(tmp_path):
+    path = tmp_path / "pipeline.db"
+    store = StateStore(path)
+    store.db.execute("PRAGMA user_version = 5")  # as if the database predates migration 6
+    store.db.executescript(
+        "DROP TABLE list_members; DROP TABLE video_urls; DROP TABLE saved_lists;"
+        " ALTER TABLE videos DROP COLUMN early_json;"
+        " INSERT INTO videos (video_key, platform, video_id, url, canonical_url, added_at)"
+        " VALUES ('youtube:a', 'youtube', 'a', 'https://youtu.be/a', 'c', '2026-01-01');"
+    )
+    store.db.commit()
+    store.close()
+
+    reopened = StateStore(path)
+
+    assert reopened.video_urls("youtube:a") == ["https://youtu.be/a"]
+    assert reopened.video("youtube:a").early is None
+    assert reopened.saved_lists() == []

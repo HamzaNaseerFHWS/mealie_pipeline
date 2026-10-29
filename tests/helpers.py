@@ -3,6 +3,7 @@
 from typing import Any
 
 from mealie_pipeline.adapters import Adapters
+from mealie_pipeline.adapters.collectors import YouTubeCollector
 from mealie_pipeline.adapters.downloader import FakeImageDownloader
 from mealie_pipeline.adapters.fake_llm import FakeLLM
 from mealie_pipeline.adapters.fake_mealie import FakeMealie
@@ -26,4 +27,5 @@ def fake_adapters(**overrides: Any) -> Adapters:
         "search_fallback": FakeWebSearch(),
     }
     parts.update(overrides)
+    parts.setdefault("collectors", {"youtube": YouTubeCollector(parts["videos"])})
     return Adapters(**parts)

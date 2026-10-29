@@ -34,3 +34,19 @@ def test_youtube_forms_share_one_video_key(url):
 )
 def test_unsupported_urls(url):
     assert normalize(url) is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://music.youtube.com/watch?v=dQw4w9WgXcQ&si=abc",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLabc123&index=4",  # opened from a playlist
+        "https://www.youtube.com/watch?list=WL&v=dQw4w9WgXcQ&pp=xyz",
+    ],
+)
+def test_more_youtube_forms_share_one_video_key(url):
+    result = normalize(url)
+
+    assert result is not None
+    assert result.video_key == "youtube:dQw4w9WgXcQ"
+    assert result.canonical_url == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
