@@ -237,3 +237,7 @@ def test_video_title(title, description, expected):
 )
 def test_website_of(url, site):
     assert website_of(url) == site
+
+
+def test_a_malformed_link_is_skipped_instead_of_crashing():
+    assert extract_urls("see http://[broken and https://ok.example/r") == ["https://ok.example/r"]

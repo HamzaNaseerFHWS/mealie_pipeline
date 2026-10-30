@@ -66,7 +66,11 @@ def extract_urls(text: str) -> list[str]:
             continue
         if not url.lower().startswith("http"):
             url = "https://" + url
-        if urlparse(url).hostname and url not in found:
+        try:
+            has_host = bool(urlparse(url).hostname)
+        except ValueError:  # e.g. an unbalanced '[' in the host
+            continue
+        if has_host and url not in found:
             found.append(url)
     return found
 
