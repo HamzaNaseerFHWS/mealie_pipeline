@@ -24,7 +24,7 @@
 - `creators.py` + store migration 7 (`creator_websites`): a Creator → Recipe Website registry keyed by normalized handle, so the same Creator on several platforms shares one website; the first Video that links a website teaches it, later ones don't overwrite it.
 - `site_search.py`: WordPress search page, then WP REST `/wp-json/wp/v2/posts?search=`, then `sitemap.xml` (following a sitemap index to the post sitemap); first page whose title fuzzy-matches ≥ `web.site_search_min_score` (85) wins. Tested against `pytest-httpserver`.
 - Browser port: `fetch_rendered` on `PlaywrightBrowser` and `FakeBrowser`. Rendering is only used for link-in-bio hosts (`web.link_in_bio_hosts`) and pages the plain fetch marked `needs_browser` (`web.render_blocked`). A page that still shows a challenge stays `needs_browser`; it is never worked around.
-- `scrape.py` / `pipeline.py`: open link-in-bio pages, render blocked pages, and fall back to site search on the Creator's website when the Video links no recipe. The Source records `link_source` (`description`, `pinned_comment`, `link_in_bio`, `site_search`, ...), shown as a new `link_source` column in `report.csv`.
+- `scrape.py` / `pipeline.py`: open link-in-bio pages, render blocked pages, and fall back to site search on the Creator's website when the Video links no recipe. The Source records `link_source` (`description`, `comment`, `link_in_bio` or `site_search`), shown as a new `link_source` column in `report.csv`.
 - Stricter Gate for site-search recipes: `verify.site_search_upload_at` (default 90); below it a site-search recipe uploads with the review tag at best.
 - New `web:` and `verify:` keys documented in `config/settings.yaml`.
 - Pipeline-seam tests in `tests/test_link_in_bio_seam.py`.
