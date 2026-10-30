@@ -4,7 +4,7 @@ import csv
 import json
 from pathlib import Path
 
-from mealie_pipeline.pipeline import STAGES, VIDEO_STAGES
+from mealie_pipeline.pipeline import STAGES, VIDEO_STAGES, also_on
 from mealie_pipeline.scrape import web_json_path
 from mealie_pipeline.store import StateStore
 
@@ -20,6 +20,7 @@ REPORT_COLUMNS = [
     "platform",
     "video_label",
     "link_source",
+    "also_on",
     *(f"{stage}_status" for stage in STAGES),
     "score",
     "outcome",
@@ -96,6 +97,7 @@ def write_report(store: StateStore, workspace: Path) -> Path:
                     "platform": video.platform,
                     "video_label": (video.classification or {}).get("label", ""),
                     "link_source": link_source(workspace, video.platform, video.video_id),
+                    "also_on": ";".join(also_on(store, video.video_key)),
                     **statuses,
                     "score": verify.get("score", ""),
                     "outcome": verify.get("outcome", ""),
