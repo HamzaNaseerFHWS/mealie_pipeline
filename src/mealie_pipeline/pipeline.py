@@ -5,6 +5,7 @@ Each stage is a function over the State Store with an `Adapters` bundle. A failu
 recorded on its Stage Record and never stops the stage. Re-running changes nothing that is `done`.
 """
 
+import contextlib
 import csv
 import json
 import re
@@ -19,7 +20,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from mealie_pipeline import grounding
+from mealie_pipeline import dedupe, grounding
 from mealie_pipeline.adapters import Adapters
 from mealie_pipeline.adapters.llm import LLMError, Tier, UsageLimited
 from mealie_pipeline.adapters.mealie import Catalog, Food, Unit
@@ -69,6 +70,7 @@ from mealie_pipeline.verify import Evaluation, evaluate
 STAGES = [
     "metadata",
     "classify",
+    "dedupe",
     "linkcheck",
     "scrape",
     "outline",
@@ -79,14 +81,16 @@ STAGES = [
     "upload",
 ]
 # Stages that run once per Video; the rest run per Recipe Part.
-VIDEO_STAGES = {"metadata", "classify", "scrape", "outline"}
+VIDEO_STAGES = {"metadata", "classify", "dedupe", "scrape", "outline"}
 # The stage that must be done first for the same entity. A Video's Recipe Parts exist only once
 # `classify` let it through (a Recipe Request's from the start), so `linkcheck` has no prerequisite.
 # `scrape` (per Video) waits for a Part's `linkcheck`, and `extract` waits for its Part's `linkcheck`
-# and its Video's `scrape`. Every stage after `classify` takes only Videos it let through.
+# and its Video's `scrape`. Every stage after `classify` takes only Videos it let through, and
+# every stage after `dedupe` only the canonical Video of a group (the others are `also_on`).
 PREREQUISITE: dict[str, str | None] = {
     "metadata": None,
     "classify": "metadata",
+    "dedupe": "classify",
     "linkcheck": None,
     "scrape": "metadata",
     "outline": "scrape",
@@ -97,6 +101,8 @@ PREREQUISITE: dict[str, str | None] = {
     "upload": "verify",
 }
 MAX_TAGS = 6
+ALSO_ON = "also_on:"  # a Video `dedupe` folded into the canonical Video named after it
+SIBLING_OF = "sibling_of:"  # a group member that had already gone on before `dedupe` grouped it
 # Stages that only read the web or call `claude` for one item at a time: they can use several workers.
 # parse, tag, verify and upload write to Mealie and its Catalog, so they always run one at a time.
 PARALLEL_STAGES = {"scrape", "extract"}
@@ -122,6 +128,7 @@ class RunReport:
     review: list[str] = field(default_factory=list)
     already_in_mealie: list[str] = field(default_factory=list)
     not_recipes: list[str] = field(default_factory=list)  # skipped by `classify`, with their label
+    duplicates: list[str] = field(default_factory=list)  # folded into another Video by `dedupe`
     upgraded_existing: list[str] = field(default_factory=list)
     dry_run_files: list[Path] = field(default_factory=list)
     stopped: str | None = None
@@ -140,6 +147,7 @@ class RunReport:
             self.upgraded_existing,
             self.warnings,
             self.not_recipes,
+            self.duplicates,
         )
         for lines in lists:
             lines.sort()
@@ -282,6 +290,9 @@ class Pipeline:
                 if not self._classify(todo, report, should_stop):
                     return report
                 continue
+            if stage == "dedupe":  # groups need every Video at once, so it also revisits earlier ones
+                self._dedupe(todo, report)
+                continue
             if workers > 1 and stage in PARALLEL_STAGES and len(todo) > 1:
                 stop = self._run_parallel(
                     kind, stage, todo, handlers[stage], report, dry_run, workers, should_stop
@@ -414,10 +425,14 @@ class Pipeline:
         self.store.set_metadata(video_key, meta.model_dump())
 
     def _let_through(self, video_key: str) -> bool:
-        """A Recipe Request always; a Video once `classify` labelled it a recipe."""
+        """A Recipe Request always; a Video once `classify` labelled it a recipe and `dedupe` did not
+        fold it into another Video."""
         if self.store.video(video_key).platform == "web":
             return True
-        return self.store.stage_status("video", video_key, "classify") == "done"
+        return (
+            self.store.stage_status("video", video_key, "classify") == "done"
+            and self.store.stage_status("video", video_key, "dedupe") != "skipped"
+        )
 
     def _classify(self, keys: list[str], report: RunReport, should_stop: Callable[[], bool]) -> bool:
         """Labels the Videos in batches; False when the run must stop. Recipe Requests are no Videos
@@ -500,6 +515,154 @@ class Pipeline:
         else:
             self.store.record("video", video_key, "classify", "skipped", detail)
             report.not_recipes.append(f"{video_key}: {detail}")
+
+    # -- dedupe ---------------------------------------------------------------------------
+
+    def _dedupe(self, keys: list[str], report: RunReport) -> None:
+        """Groups near-duplicate Videos and lets only the canonical Video of each group go on.
+
+        Every Video `classify` let through is grouped, not just the new ones, so a Video that arrives
+        later joins the group of one that went on earlier. A group member whose link is already in
+        Mealie is the canonical one, so the group resolves to that recipe. Overrides from
+        `reports/dedupe.csv` win. A Video not yet extracted follows a changed group; one that already
+        went on does not."""
+        csv_path = self.workspace / "reports" / "dedupe.csv"
+        overrides, warnings = dedupe.read_overrides(csv_path)
+        report.warnings += warnings
+        videos = [
+            v
+            for v in self.store.videos()
+            if v.platform != "web" and self.store.stage_status("video", v.video_key, "classify") == "done"
+        ]
+        cands = {v.video_key: self._dedupe_candidate(v) for v in videos}
+        settled = frozenset(
+            k for k in cands if self.store.stage_status("video", k, "dedupe") == "done" or self._started(k)
+        )
+        groups = dedupe.plan_groups(list(cands.values()), overrides, settled=settled)
+        links: dict[str, str] = {}
+        if groups:  # Mealie is asked only when there is a group to resolve against it
+            self._links = None  # one fresh listing of Mealie per batch
+            with contextlib.suppress(MealieError):  # Mealie is not reachable: group without it
+                links = self._link_set()
+            groups = dedupe.plan_groups(
+                list(cands.values()),
+                overrides,
+                existing=frozenset(k for k in cands if k in links),
+                settled=settled,
+            )
+        folded = {member: g for g in groups for member in g.also_on}
+        grouped = {g.canonical for g in groups} | set(folded)
+        pending = set(keys)
+        for key in cands:
+            status = self.store.stage_status("video", key, "dedupe")
+            group = folded.get(key)
+            if group is not None and not self._started(key):
+                detail = f"{ALSO_ON}{group.canonical}"
+                if status != "skipped" or self.store.stage_detail("video", key, "dedupe") != detail:
+                    self.store.record("video", key, "dedupe", "skipped", detail)
+                    report.duplicates.append(f"{key}: also on {group.canonical} ({group.reason})")
+            elif group is not None:  # went on before it was grouped: confirmed after parsing
+                if key in pending or status is None:
+                    self.store.record("video", key, "dedupe", "done", f"{SIBLING_OF}{group.canonical}")
+                    report.count("dedupe")
+            elif key in pending or status == "skipped":
+                self.store.record("video", key, "dedupe", "done", "in a group" if key in grouped else "")
+                report.count("dedupe")
+        self._write_dedupe_csv(csv_path, groups, cands, overrides, links)
+
+    def _started(self, video_key: str) -> bool:
+        """Has the Video's Recipe Part gone past `dedupe` (extracted, or already in Mealie)?"""
+        parts = [p for p in self.store.parts() if p.video_key == video_key]
+        return any(p.extracted is not None or p.slug for p in parts)
+
+    def _dedupe_candidate(self, video: Any) -> dedupe.Candidate:
+        meta = video_meta(video)
+        return dedupe.candidate(
+            video.video_key,
+            video.platform,
+            video.canonical_url,
+            handle=creator_handle(meta),
+            title=meta.title,
+            description=meta.description,
+            upload_date=meta.upload_date,
+        )
+
+    def _write_dedupe_csv(
+        self,
+        path: Path,
+        groups: list[dedupe.Group],
+        cands: dict[str, dedupe.Candidate],
+        overrides: dict[str, str],
+        links: dict[str, str],
+    ) -> None:
+        rows = []
+        shown: set[str] = set()
+        for group in groups:
+            for key in (group.canonical, *group.also_on):
+                role = "canonical" if key == group.canonical else "also_on"
+                reason = group.reason if role == "canonical" else ""
+                if key in links:
+                    reason = ("in Mealie; " + reason).strip("; ")
+                rows.append(self._dedupe_row(cands[key], group.canonical, role, reason, overrides))
+                shown.add(key)
+        for key, value in overrides.items():  # an Override stays in the file also when its group is gone
+            if key in cands and key not in shown:
+                rows.append(
+                    self._dedupe_row(cands[key], "", "split" if value == "split" else "alone", "", overrides)
+                )
+        dedupe.write_csv(path, rows)
+
+    def _dedupe_row(
+        self, cand: dedupe.Candidate, canonical: str, role: str, reason: str, overrides: dict[str, str]
+    ) -> dict[str, str]:
+        creator = video_meta(self.store.video(cand.video_key)).uploader
+        return {
+            "group_id": canonical or cand.video_key,
+            "video_key": cand.video_key,
+            "url": cand.url,
+            "platform": cand.platform,
+            "title": cand.title,
+            "creator": creator,
+            "role": role,
+            "canonical_key": canonical,
+            "reason": reason,
+            "override": overrides.get(cand.video_key, ""),
+        }
+
+    def _confirm_group(self, item_key: str) -> list[str]:
+        """After parsing: a group member that went on anyway is checked against its group's canonical
+        recipe by food-level Jaccard. A pair under 0.7 is split again (the sibling stands alone)."""
+        found = []
+        for sibling, canonical in self._group_pairs(self.store.part(item_key).video_key):
+            mine, theirs = (self._foods(k) for k in (sibling, canonical))
+            if mine is None or theirs is None:
+                continue  # the other recipe is not parsed yet: checked when it is
+            if dedupe.confirmed(mine, theirs):
+                self.store.record("video", sibling, "dedupe", "done", f"{ALSO_ON}{canonical}")
+            else:
+                score = dedupe.jaccard(mine, theirs)
+                self.store.record(
+                    "video", sibling, "dedupe", "done", f"split after parsing: overlap {score:.2f}"
+                )
+                found.append(f"{sibling}: not the same dish as {canonical} (food overlap {score:.2f}), split")
+        return found
+
+    def _foods(self, video_key: str) -> set[str] | None:
+        parts = [p for p in self.store.parts() if p.video_key == video_key and p.parsed]
+        return dedupe.foods_of([p["food_name"] for p in parts[0].parsed or []]) if parts else None
+
+    def _group_pairs(self, video_key: str) -> list[tuple[str, str]]:
+        """`(sibling, canonical)` pairs this Video belongs to, where the sibling went on anyway."""
+        pairs = []
+        for record in self.store.stage_records():
+            if record.stage != "dedupe" or record.status != "done" or not record.last_error:
+                continue
+            if not record.last_error.startswith(SIBLING_OF):
+                continue
+            canonical = record.last_error.removeprefix(SIBLING_OF)
+            if video_key in (record.entity_key, canonical):
+                pairs.append((record.entity_key, canonical))
+        return pairs
 
     def _web_path(self, video_key: str) -> Path:
         video = self.store.video(video_key)
@@ -720,6 +883,7 @@ class Pipeline:
         recipe = ExtractedRecipe.model_validate(part.extracted)
         parsed = self._parse_ingredients(recipe, item_key, create=True)
         self.store.update_part(item_key, parsed=[p.model_dump() for p in parsed])
+        report.warnings += self._confirm_group(item_key)
 
     def _tag(self, item_key: str, report: RunReport, dry_run: bool) -> None:
         part = self.store.part(item_key)
@@ -992,6 +1156,13 @@ class Pipeline:
             of=part.part_count,
         )
         payload["notes"] = [*payload["notes"], *({"title": SIBLING_TITLE, "text": n} for n in notes)]
+        urls = also_on(self.store, video_key)
+        if urls:
+            payload["extras"]["also_on"] = urls
+            payload["notes"] = [
+                *payload["notes"],
+                {"title": "Also posted on", "text": "\n".join(urls)},
+            ]
         request = self._request_for(item_key) if platform == "web" else None
         if request is not None:
             payload["extras"] = {
@@ -1204,6 +1375,17 @@ class Pipeline:
             if new_file:
                 writer.writerow(["name", "first_video_key", "created_at"])
             writer.writerow([name, video_key, self.now().isoformat(timespec="seconds")])
+
+
+def also_on(store: StateStore, video_key: str) -> list[str]:
+    """URLs of the Videos `dedupe` folded into this one, in Video Key order."""
+    marker = f"{ALSO_ON}{video_key}"
+    folded = [
+        r.entity_key
+        for r in store.stage_records()
+        if r.stage == "dedupe" and r.status in ("skipped", "done") and r.last_error == marker
+    ]
+    return [store.video(k).canonical_url for k in sorted(folded)]
 
 
 def by_hand(label: str) -> Verdict:

@@ -327,6 +327,8 @@ def run(
         typer.echo(f"already_in_mealie {line}")
     for line in report.upgraded_existing:
         typer.echo(f"upgraded_existing {line}")
+    for line in report.duplicates:
+        typer.echo(f"duplicate {line}")
     if report.already_in_mealie or report.upgraded_existing:
         typer.echo(
             f"{len(report.already_in_mealie)} already in Mealie (skipped), "

@@ -508,6 +508,14 @@ class StateStore:
         ).fetchone()
         return row["status"] if row else None
 
+    def stage_detail(self, kind: EntityKind, key: str, stage: str) -> str | None:
+        """The detail (or last error) the Stage Record was written with."""
+        row = self._db.execute(
+            "SELECT last_error FROM stage_records WHERE entity_kind = ? AND entity_key = ? AND stage = ?",
+            (kind, key, stage),
+        ).fetchone()
+        return row["last_error"] if row else None
+
     def stage_records(self) -> list[StageRecord]:
         rows = self._db.execute(
             "SELECT * FROM stage_records ORDER BY entity_kind, entity_key, updated_at"
