@@ -15,7 +15,7 @@
 
 **Blocked by:** 08, 07, 06
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `PIPELINE_SPEC.md` §6.1; `docs/adr/0006`; wayfinder ticket `09-multi-recipe-videos.md`.
 
