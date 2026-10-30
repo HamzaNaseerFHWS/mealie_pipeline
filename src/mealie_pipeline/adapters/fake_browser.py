@@ -1,4 +1,6 @@
-"""Scripted Browser: cookie snapshots in order (the last one repeats) and pages by URL."""
+"""Scripted Browser: cookie snapshots in order (the last one repeats) and pages by URL.
+
+`open` and `fetch_rendered` share `pages`; an unknown URL renders as status 0 in `fetch_rendered`."""
 
 from typing import Any
 
@@ -16,6 +18,7 @@ class FakeBrowser:
         self.pages = pages or {}
         self.shown: list[str] = []
         self.opened: list[str] = []
+        self.rendered: list[str] = []  # every `fetch_rendered` call
         self.closed = False
         self._reads = 0
 
@@ -30,6 +33,10 @@ class FakeBrowser:
     def open(self, url: str, profile: PlatformProfile) -> RenderedPage:
         self.opened.append(url)
         return checked(self.pages[url], profile)
+
+    def fetch_rendered(self, url: str) -> RenderedPage:
+        self.rendered.append(url)
+        return self.pages.get(url, RenderedPage(url, 0, "", ""))
 
     def close(self) -> None:
         self.closed = True

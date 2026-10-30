@@ -72,7 +72,7 @@ def test_videos_added_before_saved_lists_existed_keep_their_url(tmp_path):
     store = StateStore(path)
     store.db.execute("PRAGMA user_version = 5")  # as if the database predates migration 6
     store.db.executescript(
-        "DROP TABLE list_members; DROP TABLE video_urls; DROP TABLE saved_lists;"
+        "DROP TABLE list_members; DROP TABLE video_urls; DROP TABLE saved_lists; DROP TABLE creator_websites;"
         " ALTER TABLE videos DROP COLUMN early_json;"
         " ALTER TABLE videos DROP COLUMN classification_json;"  # migration 7 came later still
         " INSERT INTO videos (video_key, platform, video_id, url, canonical_url, added_at)"

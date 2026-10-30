@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from mealie_pipeline.adapters.fake_llm import FakeLLM
 from mealie_pipeline.adapters.mealie import Recipe, Tag
 from mealie_pipeline.errors import MealieHttpError
+from tests.helpers import recipe_llm
 from tests.test_pipeline_seam import (
     TOKEN,
     URL,
@@ -223,7 +223,7 @@ def test_a_failed_patch_is_reported_and_the_run_goes_on(world: ProteinWorld, mix
 def test_llm_check_sends_only_ambiguous_recipes_in_batches_and_keeps_listed_names(world: ProteinWorld):
     clear = add_recipe(world, "Karahi", foods=["chicken thighs", "onion"])
     unclear = [add_recipe(world, f"Mystery Stew {n}", foods=["meat"]) for n in range(21)]
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
     world.llm.script(
         "protein_tags",
         {"recipes": [{"slug": unclear[0], "tags": ["beef", "Unicorn"]}]},
@@ -258,7 +258,7 @@ def test_a_newly_uploaded_chicken_recipe_carries_the_chicken_tag(world: ProteinW
     recipe = load("llm_extract_okra.json")
     recipe["name"] = "Chicken Bhindi"
     recipe["tag_choices"] = [{"tag": "Dinner", "reason": "a main"}]
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
     world.llm.script("extract", recipe)
     world.invoke("add", URL)
 

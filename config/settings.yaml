@@ -47,6 +47,7 @@ verify:
   max_dropped_fraction: 0.2
   soft_fail_below: 0.75
   review_tag: To Review
+  site_search_upload_at: 90   # a recipe from a site-search page (not linked by the Video) needs this to upload untagged
   # weights:
   #   H3: 20   # share of ingredients whose quote was found in the Source
   #   S1: 15   # website vs video agreement (needs a website Source)
@@ -64,6 +65,13 @@ web:
   max_pages: 3              # candidate links tried per Video
   fetch_pinned_comment: true   # also look for the recipe link in the creator's pinned comment
   robots_allowlist: []      # domains whose robots.txt is not consulted, e.g. your own site
+  # Link-in-bio pages (JS-only link lists) are opened in the Browser and the button matching the
+  # Video title is followed.
+  link_in_bio_hosts: [linktr.ee, lnk.bio, beacons.ai, bio.link]
+  bio_min_score: 70         # a bio button must match the Video title at least this well (0-100)
+  render_blocked: true      # a page that came back blocked / JS-only is retried in the Browser (never solved)
+  site_search: true         # no recipe link: search the Creator's Recipe Website (WP search, WP REST, sitemap)
+  site_search_min_score: 85 # fuzzy title match a site-search page needs (0-100)
 
 find:
   # Turning a recipe name into the right recipe page (`mp run --stages find`).

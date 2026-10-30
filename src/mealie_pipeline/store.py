@@ -125,6 +125,16 @@ MIGRATIONS = [
     """,
     # Migration 7 (ticket 05): the Video Label and how it was reached (`classify` stage).
     "ALTER TABLE videos ADD COLUMN classification_json TEXT;",
+    # Migration 8 (ticket 17): the Creator -> Recipe Website registry, keyed by normalized handle.
+    """
+    CREATE TABLE creator_websites (
+        handle TEXT PRIMARY KEY,
+        website TEXT NOT NULL,
+        source TEXT NOT NULL,
+        learned_from TEXT,
+        added_at TEXT NOT NULL
+    );
+    """,
 ]
 
 PART_JSON_FIELDS = {"extracted", "parsed", "tags", "verify"}

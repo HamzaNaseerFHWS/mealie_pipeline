@@ -6,10 +6,9 @@ import csv
 import pytest
 from typer.testing import CliRunner
 
-from mealie_pipeline.adapters.fake_llm import FakeLLM
 from mealie_pipeline.adapters.ingredient_engine import EngineParse, FakeIngredientEngine
 from mealie_pipeline.cli import app
-from tests.helpers import fake_adapters
+from tests.helpers import fake_adapters, recipe_llm
 from tests.test_pipeline_seam import (
     ENGINE,
     ITEM_KEY,
@@ -52,7 +51,7 @@ def script(world: DualWorld, **changes: dict) -> None:
     recipe = copy.deepcopy(load("llm_extract_okra.json"))
     for ingredient in recipe["ingredients"]:
         ingredient["llm_parse"] = changes.get(ingredient["line"], LLM_PARSES[ingredient["line"]])
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
     world.llm.script("extract", recipe)
 
 
@@ -147,7 +146,7 @@ def test_an_implausible_quantity_is_flagged_and_lowers_the_sanity_score(world: D
 
 
 def test_the_extraction_without_llm_parses_still_uploads_on_engine_a_alone(world: DualWorld):
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
     world.llm.script("extract", load("llm_extract_okra.json"))
 
     assert run(world).exit_code == 0

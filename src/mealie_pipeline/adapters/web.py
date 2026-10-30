@@ -161,7 +161,9 @@ class HttpxWebFetcher:
             response = self.client.get(url)
         except httpx.HTTPError as err:
             return Page(url, url, 0, blocked="error", detail=str(err)[:300])  # not cached: retry later
-        html = response.text if "html" in response.headers.get("content-type", "html") else ""
+        # HTML pages, plus the JSON and XML of site search (WP REST API, sitemaps); never binaries.
+        content_type = response.headers.get("content-type", "html")
+        html = response.text if any(t in content_type for t in ("html", "json", "xml")) else ""
         blocked: Blocked = "needs_browser" if looks_blocked(response.status_code, html) else ""
         page = Page(url, str(response.url), response.status_code, html, blocked)
         self._store(page)

@@ -1,9 +1,11 @@
 """`mp status` and `reports/report.csv`: read-only views of the State Store."""
 
 import csv
+import json
 from pathlib import Path
 
 from mealie_pipeline.pipeline import STAGES, VIDEO_STAGES
+from mealie_pipeline.scrape import web_json_path
 from mealie_pipeline.store import StateStore
 
 STATUSES = ["pending", "running", "done", "failed", "skipped", "review"]
@@ -17,6 +19,7 @@ REPORT_COLUMNS = [
     "video_url",
     "platform",
     "video_label",
+    "link_source",
     *(f"{stage}_status" for stage in STAGES),
     "score",
     "outcome",
@@ -43,6 +46,17 @@ def created_food_counts(workspace: Path) -> dict[str, int]:
         for row in csv.DictReader(handle):
             counts[row["first_video_key"]] = counts.get(row["first_video_key"], 0) + 1
     return counts
+
+
+def link_source(workspace: Path, platform: str, video_id: str) -> str:
+    """How the Video's recipe page was found (`description`, `comment`, `link_in_bio`, `site_search`)."""
+    path = web_json_path(workspace, platform, video_id)
+    if not path.is_file():
+        return ""
+    try:
+        return str(json.loads(path.read_text(encoding="utf-8")).get("link_source", ""))
+    except ValueError:
+        return ""
 
 
 def write_report(store: StateStore, workspace: Path) -> Path:
@@ -81,6 +95,7 @@ def write_report(store: StateStore, workspace: Path) -> Path:
                     "video_url": video.canonical_url,
                     "platform": video.platform,
                     "video_label": (video.classification or {}).get("label", ""),
+                    "link_source": link_source(workspace, video.platform, video.video_id),
                     **statuses,
                     "score": verify.get("score", ""),
                     "outcome": verify.get("outcome", ""),

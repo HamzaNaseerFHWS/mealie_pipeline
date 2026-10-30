@@ -327,7 +327,8 @@ def test_report_has_one_row_per_recipe_part_and_one_per_video_without_parts(thre
     with (world.workspace / "reports" / "report.csv").open(encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert list(rows[0]) == [
-        "item_key", "video_url", "platform", "video_label", "metadata_status", "classify_status",
+        "item_key", "video_url", "platform", "video_label", "link_source", "metadata_status",
+        "classify_status",
         "linkcheck_status",
         "scrape_status",
         "extract_status",
