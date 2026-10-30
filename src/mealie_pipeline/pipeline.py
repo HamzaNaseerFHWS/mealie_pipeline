@@ -11,7 +11,7 @@ import re
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,7 +22,7 @@ from pydantic import ValidationError
 from mealie_pipeline import grounding
 from mealie_pipeline.adapters import Adapters
 from mealie_pipeline.adapters.llm import LLMError, Tier, UsageLimited
-from mealie_pipeline.adapters.mealie import Catalog, Food, Tag, Unit
+from mealie_pipeline.adapters.mealie import Catalog, Food, Unit
 from mealie_pipeline.adapters.video_source import VideoSourceError
 from mealie_pipeline.classify import (
     Classifier,
@@ -40,10 +40,18 @@ from mealie_pipeline.existing_links import build_link_set
 from mealie_pipeline.find import single_recipe
 from mealie_pipeline.images import attach_image, candidate_urls
 from mealie_pipeline.matching import FoodMatcher, UnitNormalizer
-from mealie_pipeline.models import ExtractedRecipe, Judge, ParsedIngredient, VideoMeta, extraction_schema
+from mealie_pipeline.models import (
+    ExtractedRecipe,
+    Judge,
+    Outline,
+    ParsedIngredient,
+    VideoMeta,
+    extraction_schema,
+)
+from mealie_pipeline.outline import OutlineError, detect_signals, segment, validate_outline
 from mealie_pipeline.payload import build_payload
 from mealie_pipeline.protein import ProteinRules, RecipeText, detect, tag_key
-from mealie_pipeline.recipe_extraction import extract_recipes
+from mealie_pipeline.recipe_extraction import SourceRecipe, extract_recipes
 from mealie_pipeline.recipe_extraction import format_for_prompt as web_text
 from mealie_pipeline.recipe_requests import RecipeRequest, RecipeRequests
 from mealie_pipeline.reconcile import reconcile
@@ -53,13 +61,25 @@ from mealie_pipeline.sanity import check_line
 from mealie_pipeline.scoring import apply_judge, decide
 from mealie_pipeline.scrape import WebResult, find_web_recipe
 from mealie_pipeline.settings import Settings, VerifySettings
-from mealie_pipeline.store import EntityKind, StateStore, Status
+from mealie_pipeline.store import EntityKind, RecipePart, StateStore, Status
+from mealie_pipeline.tagging import RecipeFacts, TagRules, choose, contradictions, match_existing, rule_tags
 from mealie_pipeline.url_normalizer import normalize_website
 from mealie_pipeline.verify import Evaluation, evaluate
 
-STAGES = ["metadata", "classify", "linkcheck", "scrape", "extract", "parse", "tag", "verify", "upload"]
+STAGES = [
+    "metadata",
+    "classify",
+    "linkcheck",
+    "scrape",
+    "outline",
+    "extract",
+    "parse",
+    "tag",
+    "verify",
+    "upload",
+]
 # Stages that run once per Video; the rest run per Recipe Part.
-VIDEO_STAGES = {"metadata", "classify", "scrape"}
+VIDEO_STAGES = {"metadata", "classify", "scrape", "outline"}
 # The stage that must be done first for the same entity. A Video's Recipe Parts exist only once
 # `classify` let it through (a Recipe Request's from the start), so `linkcheck` has no prerequisite.
 # `scrape` (per Video) waits for a Part's `linkcheck`, and `extract` waits for its Part's `linkcheck`
@@ -69,6 +89,7 @@ PREREQUISITE: dict[str, str | None] = {
     "classify": "metadata",
     "linkcheck": None,
     "scrape": "metadata",
+    "outline": "scrape",
     "extract": "linkcheck",
     "parse": "extract",
     "tag": "parse",
@@ -89,6 +110,7 @@ WEB_TEXT_RULE = (
     "you would from a description, preferring it over the video description when they differ."
 )
 TO_TASTE = "to taste"
+SIBLING_TITLE = "Also in this video"  # the title that marks the sibling note
 
 
 @dataclass
@@ -141,6 +163,7 @@ class Pipeline:
         self._catalog: Catalog | None = None
         self._catalog_lock = threading.Lock()  # workers must not each download the whole Catalog
         self._detail: dict[str, str] = {}
+        self._uploaded_videos: set[str] = set()
         self.mode = "skip"
         self.upgrade_existing = False
         self._links: dict[str, str] | None = None
@@ -155,6 +178,8 @@ class Pipeline:
         ) or {}
         proteins = workspace / "config" / "protein_tags.yaml"
         self.proteins = ProteinRules.load(proteins) if proteins.is_file() else None
+        tag_rules = workspace / "config" / "tag_rules.yaml"
+        self.tag_rules = TagRules.load(tag_rules) if tag_rules.is_file() else None
 
     # -- public ---------------------------------------------------------------------------
 
@@ -215,6 +240,7 @@ class Pipeline:
             "metadata": self._metadata,
             "linkcheck": self._linkcheck,
             "scrape": self._scrape,
+            "outline": self._outline,
             "extract": self._extract,
             "parse": self._parse,
             "tag": self._tag,
@@ -247,11 +273,9 @@ class Pipeline:
                     if self.store.stage_status("part", p.item_key, "linkcheck") == "done"
                 }
                 batch = [key for key in batch if key in wanted_videos]
-            if stage == "extract":  # wait for the Video's recipe website (`scrape`)
+            if stage == "extract":  # wait for the Video's recipe website (`scrape`) and its `outline`
                 batch = [
-                    key
-                    for key in batch
-                    if self.store.stage_status("video", self.store.part(key).video_key, "scrape") == "done"
+                    key for key in batch if self._ready_to_extract(self.store.part(key).video_key, wanted)
                 ]
             todo = batch[:limit] if limit is not None else batch
             if stage == "classify":  # batched: many Videos per LLM call
@@ -275,9 +299,17 @@ class Pipeline:
                 self.store.record(kind, key, stage, "running")
                 if not self._process(kind, key, stage, handlers[stage], report, dry_run):
                     return report
+            if stage == "upload" and not dry_run:
+                self._link_siblings(report)
         if workers > 1:
             report.sort_lines()
         return report
+
+    def _ready_to_extract(self, video_key: str, wanted: list[str]) -> bool:
+        if self.store.stage_status("video", video_key, "scrape") != "done":
+            return False
+        outline = self.store.stage_status("video", video_key, "outline")
+        return outline == "done" or (outline is None and "outline" not in wanted)
 
     def _process(
         self,
@@ -533,6 +565,48 @@ class Pipeline:
             if result.reason in ("needs_browser", "robots", "error"):
                 report.warnings.append(f"{video_key}: recipe page not read ({result.reason})")
 
+    def _outline(self, video_key: str, report: RunReport, dry_run: bool) -> None:
+        """One `strong` call per Video that shows signs of several recipes; each recipe becomes its own
+        Recipe Part with its own slice of the Sources. Other Videos stay one part, with no call."""
+        video = self.store.video(video_key)
+        if video.platform == "web":
+            return
+        meta = VideoMeta.model_validate(video.metadata)
+        web = self._web(video_key)
+        names = [r.name for r in web.recipes] if web else []
+        signals = detect_signals(meta, names)
+        if not signals:
+            return
+        prompt = (
+            f"Title: {meta.title}\nDuration: {meta.duration_s or 'unknown'} s\n"
+            f"Signals: {', '.join(signals)}\n"
+            + "".join(
+                f"Chapter {c.start_s:g}-{c.end_s if c.end_s is not None else '?'} s: {c.title}\n"
+                for c in meta.chapters
+            )
+            + (f"Recipes on the website page: {json.dumps(names, ensure_ascii=False)}\n" if names else "")
+            + f"\n[SRC:desc]\n{meta.description}\n[/SRC]\n"
+        )
+        raw = self.a.llm.complete("outline", prompt, Outline.model_json_schema(), "strong")
+        try:
+            parts = validate_outline(
+                Outline.model_validate(raw), meta.duration_s, self.settings.outline.overlap
+            )
+        except OutlineError as err:
+            raise NeedsReview(f"outline: {err}") from err
+        if len(parts) < 2:
+            return
+        slices: list[dict[str, Any] | None] = [asdict(s) for s in segment(parts, meta.description, names)]
+        existing = self.store.video_parts(video_key)
+        if [(p.outline or {}).get("title") for p in existing] == [s["title"] for s in slices if s]:
+            return  # the same outline again: nothing to replace
+        keys = self.store.replace_parts(video_key, slices)
+        if keys is None:
+            raise NeedsReview(f"outline now has {len(slices)} recipes but some earlier parts are uploaded")
+        for key in keys:  # the Video's link was checked before the outline; its parts share it
+            self.store.record("part", key, "linkcheck", "done")
+        self._detail[video_key] = f"{len(slices)} recipes: " + ", ".join(s["title"] for s in slices if s)
+
     def _link_set(self) -> dict[str, str]:
         """The Existing Link Set: `key -> slug` for every recipe in Mealie that has an `orgURL`."""
         if self._links is None:
@@ -554,7 +628,10 @@ class Pipeline:
         """Slug of a recipe in Mealie with this Video's link that the pipeline did not make, if any."""
         part = self.store.part(item_key)
         slug = self._link_set().get(self._link_key(part.video_key))
-        return slug if slug and slug != part.slug else None
+        mine = {
+            p.slug for p in self.store.video_parts(part.video_key) if p.slug
+        }  # sibling parts share the link
+        return slug if slug and slug != part.slug and slug not in mine else None
 
     def _linkcheck(self, item_key: str, report: RunReport, dry_run: bool) -> None:
         """Before any paid work: a Video whose link is already in Mealie is skipped (link = identity)."""
@@ -593,8 +670,9 @@ class Pipeline:
         part = self.store.part(item_key)
         video = self.store.video(part.video_key)
         meta = VideoMeta.model_validate(video.metadata)
-        web = self._web(part.video_key)
-        if not meta.description.strip() and web is None:
+        web = self._part_web(part)
+        sources = self._sources(item_key)
+        if not sources["desc"].strip() and web is None:
             raise StageFailure("the video has no description or website recipe to extract from")
         tags = sorted(t.name for t in self.catalog.tags)
         prompt = (
@@ -608,11 +686,20 @@ class Pipeline:
                 f"Requested recipe name: {request.name}.{hint} "
                 "(Context only. Never quote it as Evidence.)\n\n"
             )
-        if web is not None and web.recipe is not None:
-            rule = WEB_STRUCTURED_RULE if web.recipe.structured else WEB_TEXT_RULE
-            prompt += f"[SRC:web]\n{web_text(web.recipe)}\n[/SRC]\n\n{rule}\n\n"
-        if meta.description.strip():
-            prompt += f"[SRC:desc]\n{meta.description}\n[/SRC]\n"
+        if part.outline is not None:
+            where = (
+                f" (from {part.outline['start_s']:g} s)" if part.outline.get("start_s") is not None else ""
+            )
+            prompt += (
+                f"This video holds {part.part_count} recipes. Extract ONLY recipe {part.part_index} of "
+                f'{part.part_count}: "{part.outline["title"]}"{where}. Ignore the other recipes; text '
+                "marked as shared applies to all of them.\n\n"
+            )
+        if web is not None:
+            rule = WEB_STRUCTURED_RULE if web.structured else WEB_TEXT_RULE
+            prompt += f"[SRC:web]\n{web_text(web)}\n[/SRC]\n\n{rule}\n\n"
+        if sources["desc"].strip():
+            prompt += f"[SRC:desc]\n{sources['desc']}\n[/SRC]\n"
         if findings:
             prompt += (
                 "\nYour previous extraction of this video failed verification. Fix these problems, "
@@ -631,21 +718,45 @@ class Pipeline:
     def _parse(self, item_key: str, report: RunReport, dry_run: bool) -> None:
         part = self.store.part(item_key)
         recipe = ExtractedRecipe.model_validate(part.extracted)
-        parsed = self._parse_ingredients(recipe, part.video_key, create=True)
+        parsed = self._parse_ingredients(recipe, item_key, create=True)
         self.store.update_part(item_key, parsed=[p.model_dump() for p in parsed])
 
     def _tag(self, item_key: str, report: RunReport, dry_run: bool) -> None:
         part = self.store.part(item_key)
-        tags = self._choose_tags(ExtractedRecipe.model_validate(part.extracted))
-        self.store.update_part(item_key, tags=tags)
+        tags = self._choose_tags(part, report)
+        if not tags:  # one retry at the strongest tier, then the `To Review` fallback
+            self._run_extraction(
+                item_key,
+                "strongest",
+                ["none of your tag choices is an existing tag: choose from the allowed tag names"],
+            )
+            self._parse(item_key, report, False)
+            tags = self._choose_tags(self.store.part(item_key), report)
+        self.store.update_part(item_key, tags=tags or [self._review_tag()])
 
-    def _sources(self, video_key: str) -> dict[str, str]:
-        """The Sources the Evidence may cite: the website recipe (`web`) and the description (`desc`)."""
-        meta = VideoMeta.model_validate(self.store.video(video_key).metadata)
-        web = self._web(video_key)
-        if web is not None and web.recipe is not None:
-            return {"web": web_text(web.recipe), "desc": meta.description}
-        return {"desc": meta.description}
+    def _part_web(self, part: RecipePart) -> SourceRecipe | None:
+        """The website recipe this part is written from: the chosen one, or the one its outline matched."""
+        web = self._web(part.video_key)
+        if web is None:
+            return None
+        if part.outline is None:
+            return web.recipe
+        index = part.outline.get("web_index")
+        return web.recipes[index] if index is not None and index < len(web.recipes) else None
+
+    def _sources(self, item_key: str) -> dict[str, str]:
+        """The Sources the Evidence may cite: the website recipe (`web`) and the description (`desc`).
+        For a part of a multi-recipe Video that is only its own slice, plus the shared text."""
+        part = self.store.part(item_key)
+        meta = VideoMeta.model_validate(self.store.video(part.video_key).metadata)
+        desc = meta.description
+        if part.outline is not None:
+            own, shared = part.outline["own"], part.outline["shared"]
+            desc = (
+                f"[Shared by every recipe in this video]\n{shared}\n\n[This recipe]\n{own}" if own else shared
+            )
+        web = self._part_web(part)
+        return {"web": web_text(web), "desc": desc} if web is not None else {"desc": desc}
 
     def _evaluate(self, item_key: str) -> Evaluation:
         part = self.store.part(item_key)
@@ -653,7 +764,7 @@ class Pipeline:
             ExtractedRecipe.model_validate(part.extracted),
             [ParsedIngredient.model_validate(p) for p in part.parsed or []],
             part.tags or [],
-            self._sources(part.video_key),
+            self._sources(item_key),
             [f.name for f in self.catalog.foods],
             self.settings.verify,
         )
@@ -685,7 +796,9 @@ class Pipeline:
         part = self.store.part(item_key)
         tags = list(part.tags or [])
         if outcome == "upload_review":
-            tags.append(self._review_tag())
+            review = self._review_tag()
+            if review["id"] not in {t["id"] for t in tags}:
+                tags.append(review)
         if outcome != "fail":  # keep the recipe without its ungrounded ingredients
             self.store.update_part(
                 item_key,
@@ -708,7 +821,7 @@ class Pipeline:
                 self.workspace,
                 item_key=item_key,
                 video=self.store.video(part.video_key),
-                sources=self._sources(part.video_key),
+                sources=self._sources(item_key),
                 recipe=evaluation.recipe,
                 verify=verify,
             )
@@ -720,8 +833,7 @@ class Pipeline:
         score = evaluation.score
         if evaluation.hard_failures or score >= cfg.judge_skip_at:
             return JudgeResult(score, [], [])
-        video_key = self.store.part(item_key).video_key
-        sources = "\n".join(f"[SRC:{k}]\n{v}\n[/SRC]" for k, v in self._sources(video_key).items())
+        sources = "\n".join(f"[SRC:{k}]\n{v}\n[/SRC]" for k, v in self._sources(item_key).items())
         recipe = json.dumps(evaluation.recipe.model_dump(), ensure_ascii=False, indent=1)
         prompt = f"Final recipe:\n{recipe}\n\nSources:\n{sources}\n"
         try:
@@ -738,9 +850,11 @@ class Pipeline:
             [f"{p.severity} {p.field}: {p.description}" for p in problems],
         )
 
-    def _review_tag(self) -> dict[str, Any]:
+    def _review_tag(self, *, create: bool = True) -> dict[str, Any]:
         name = self.settings.verify.review_tag
         existing = next((t for t in self.catalog.tags if t.name.casefold() == name.casefold()), None)
+        if existing is None and not create:  # a dry run creates nothing
+            return {"id": "", "name": name, "slug": ""}
         if existing is None:
             existing = self.a.mealie.create_tag(name)  # created once, then found in the catalog
             self.catalog.tags.append(existing)
@@ -772,10 +886,22 @@ class Pipeline:
         mealie.patch_recipe(slug, payload)
 
         meta = VideoMeta.model_validate(video.metadata)
-        web = self._web(part.video_key)
-        website_image = web.recipe.image if web and web.recipe else None
+        web = self._part_web(part)
+        website_image = web.image if web else None
         urls = candidate_urls(video.platform, video.video_id, meta.thumbnail, website_image)
-        outcome = attach_image(mealie, slug, urls, self.a.images, self.workspace / "work" / "images")
+        scratch = self.workspace / "work" / "images"
+        outcome = None
+        start = (part.outline or {}).get("start_s")
+        if website_image is None and start is not None:  # no website image: a frame from the part's start
+            frame = self.a.videos.frame(video.canonical_url, start, scratch / f"{slug}-frame.jpg")
+            if frame is not None:
+                try:
+                    mealie.upload_image(slug, frame)
+                    outcome = "file"
+                except MealieError:
+                    pass
+        if outcome is None:
+            outcome = attach_image(mealie, slug, urls, self.a.images, scratch)
         warnings = ["image_missing"] if outcome == "missing" else []
 
         stored = mealie.get_recipe(slug)
@@ -790,6 +916,7 @@ class Pipeline:
         )
         report.uploaded.append(f"{item_key}: {link}")
         report.warnings += [f"{item_key}: {w}" for w in warnings]
+        self._uploaded_videos.add(part.video_key)
 
     # -- dry run --------------------------------------------------------------------------
 
@@ -801,14 +928,14 @@ class Pipeline:
                 part = self.store.part(item_key)
                 video = self.store.video(part.video_key)
                 recipe = ExtractedRecipe.model_validate(part.extracted)
-                parsed = self._parse_ingredients(recipe, part.video_key, create=False)
-                tags = self._choose_tags(recipe)
+                parsed = self._parse_ingredients(recipe, item_key, create=False)
+                tags = self._choose_tags(part, None, parsed=parsed) or [self._review_tag(create=False)]
                 # The deterministic Gate only: no judge call, no retry, no tag created.
                 evaluation = evaluate(
                     recipe,
                     parsed,
                     tags,
-                    self._sources(part.video_key),
+                    self._sources(item_key),
                     [f.name for f in self.catalog.foods],
                     self.settings.verify,
                 )
@@ -844,9 +971,27 @@ class Pipeline:
         platform: str,
     ) -> dict[str, Any]:
         canonical = self.store.video(video_key).canonical_url
+        part = self.store.part(item_key)
+        org_url = canonical
+        notes: list[str] = []
+        if part.outline is not None:
+            start = part.outline.get("start_s")
+            if platform == "youtube" and start is not None:
+                org_url = f"{canonical}&t={int(start)}s"  # unique per part, and opens at the right place
+            others = [self._part_name(p) for p in self.store.video_parts(video_key) if p.item_key != item_key]
+            notes = [f"Also in this video: {', '.join(others)}"]
         payload = build_payload(
-            recipe, parsed, tags, org_url=canonical, item_key=item_key, video_key=video_key, platform=platform
+            recipe,
+            parsed,
+            tags,
+            org_url=org_url,
+            item_key=item_key,
+            video_key=video_key,
+            platform=platform,
+            part=part.part_index,
+            of=part.part_count,
         )
+        payload["notes"] = [*payload["notes"], *({"title": SIBLING_TITLE, "text": n} for n in notes)]
         request = self._request_for(item_key) if platform == "web" else None
         if request is not None:
             payload["extras"] = {
@@ -864,20 +1009,87 @@ class Pipeline:
                 ]
         return payload
 
-    def _choose_tags(self, recipe: ExtractedRecipe) -> list[dict[str, Any]]:
-        by_name = {tag_key(t.name): t for t in self.catalog.tags}
-        chosen: list[Tag] = []
+    def _part_name(self, part: RecipePart) -> str:
+        """A part's recipe name once extracted, else the title the outline gave it."""
+        if part.extracted and part.extracted.get("name"):
+            return str(part.extracted["name"])
+        return str((part.outline or {}).get("title") or part.item_key)
+
+    def _link_siblings(self, report: RunReport) -> None:
+        """Once every part of a multi-recipe Video is in Mealie, its sibling note gets links to the
+        others (slugs were not known when each part was uploaded): one PATCH of the notes per part."""
+        mealie = self.a.mealie
+        for video_key in sorted(self._uploaded_videos):
+            parts = self.store.video_parts(video_key)
+            if len(parts) < 2 or not all(p.slug for p in parts):
+                continue
+            for part in parts:
+                assert part.slug is not None
+                links = [
+                    f"[{self._part_name(p)}]({mealie.recipe_url(p.slug)})"
+                    for p in parts
+                    if p.item_key != part.item_key and p.slug
+                ]
+                current = mealie.get_recipe(part.slug)
+                kept = [n for n in current.get("notes") or [] if n.get("title") != SIBLING_TITLE]
+                note = {"title": SIBLING_TITLE, "text": "Also in this video: " + ", ".join(links)}
+                if note not in (current.get("notes") or []):
+                    mealie.patch_recipe(part.slug, {"notes": [*kept, note]})
+        self._uploaded_videos.clear()
+
+    def _choose_tags(
+        self,
+        part: RecipePart,
+        report: RunReport | None,
+        *,
+        parsed: list[ParsedIngredient] | None = None,
+    ) -> list[dict[str, Any]]:
+        """The recipe's 1-6 existing tags: Rule Tags first, then the LLM's by rank, minus any a Food
+        contradicts. Empty when none survive. `report=None` (a dry run) writes nothing."""
+        recipe = ExtractedRecipe.model_validate(part.extracted)
+        if parsed is None:
+            parsed = [ParsedIngredient.model_validate(p) for p in part.parsed or []]
+        by_key = {tag_key(t.name): t for t in self.catalog.tags}
+        names = [t.name for t in self.catalog.tags]
+        llm: list[str] = []
         for choice in recipe.tag_choices:
-            tag = by_name.get(tag_key(choice.tag))
-            if tag is not None and tag not in chosen:
-                chosen.append(tag)
-        # Protein Tags are Rule Tags: always kept, but only those that already exist in Mealie
-        # (`mp tags protein --apply` is what creates them).
-        proteins = [by_name[tag_key(name)] for name in self._protein_tags(recipe) if tag_key(name) in by_name]
-        chosen = [t for t in chosen if t not in proteins][: MAX_TAGS - len(proteins)] + proteins
-        if not chosen:
-            raise StageFailure("no existing Mealie tag was chosen for this recipe")
-        return [{"id": t.id, "name": t.name, "slug": t.slug} for t in chosen[:MAX_TAGS]]
+            existing = match_existing(choice.tag, names)
+            if existing is None:
+                if report is not None:
+                    self._suggest_tag(choice.tag, part.video_key)
+            else:
+                llm.append(existing)
+        facts = RecipeFacts(
+            recipe.name,
+            [p.food_name for p in parsed],
+            recipe.total_minutes or ((recipe.prep_minutes or 0) + (recipe.cook_minutes or 0)) or None,
+            recipe.language,
+        )
+        # Rule Tags (config rules, then Protein Tags) only name tags that exist in Mealie; `mp doctor`
+        # reports the rest, and `mp tags protein --apply` is what creates Protein Tags.
+        wanted = (rule_tags(facts, self.tag_rules) if self.tag_rules else []) + self._protein_tags(recipe)
+        rules = [e for name in wanted if (e := match_existing(name, names)) is not None]
+        chosen = choose(
+            rules, llm, max_tags=len(rules) + len(llm)
+        )  # capped below, once contradictions free slots
+        if self.tag_rules:
+            for tag, food in contradictions(chosen, facts, self.tag_rules).items():
+                chosen.remove(tag)
+                if report is not None:
+                    report.warnings.append(f"{part.item_key}: removed tag {tag!r}: the recipe has {food}")
+        return [
+            {"id": by_key[tag_key(t)].id, "name": by_key[tag_key(t)].name, "slug": by_key[tag_key(t)].slug}
+            for t in chosen[:MAX_TAGS]
+        ]
+
+    def _suggest_tag(self, name: str, video_key: str) -> None:
+        """A tag the LLM chose that Mealie does not have goes to `reports/suggested_tags.csv`, once."""
+        path = self.workspace / "reports" / "suggested_tags.csv"
+        if path.exists():
+            with path.open(encoding="utf-8-sig", newline="") as handle:
+                if any(tag_key(row["name"]) == tag_key(name) for row in csv.DictReader(handle)):
+                    return
+        self._log_created("suggested_tags.csv", name, video_key)
 
     def _protein_tags(self, recipe: ExtractedRecipe) -> list[str]:
         if self.proteins is None:
@@ -887,13 +1099,14 @@ class Pipeline:
         return list(detect(text, self.proteins))
 
     def _parse_ingredients(
-        self, recipe: ExtractedRecipe, video_key: str, *, create: bool
+        self, recipe: ExtractedRecipe, item_key: str, *, create: bool
     ) -> list[ParsedIngredient]:
+        video_key = self.store.part(item_key).video_key
         result = []
         # Ingredients the Gate will drop as ungrounded must not leave junk Foods behind in Mealie.
         ungrounded = set(
             grounding.ungrounded_ingredients(
-                recipe.ingredients, self._sources(video_key), self.settings.verify.grounding_threshold
+                recipe.ingredients, self._sources(item_key), self.settings.verify.grounding_threshold
             )
         )
         cfg = self.settings.parse

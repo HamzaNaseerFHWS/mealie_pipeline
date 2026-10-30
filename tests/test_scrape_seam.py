@@ -272,10 +272,15 @@ def test_unstructured_page_text_that_mentions_ingredients_is_a_lower_priority_we
     assert web_json(world)["recipes"][0]["extraction_method"] == "main-text"
 
 
+def extract_calls(llm):
+    return [c for c in non_classify_calls(llm) if c.task == "extract"]
+
+
 def test_the_recipe_closest_to_the_video_title_is_chosen_on_a_multi_recipe_page(world: WebWorld):
     world.web.pages[PAGE_URL] = page("two_recipes.html")
     world.info["title"] = "Fresh Pesto in 2 minutes"
     world.llm = recipe_llm()
+    world.llm.script("outline", {"language": "en", "parts": [{"title": "Fresh Pesto"}]})  # one recipe
     world.llm.script("extract", {"is_recipe": False, "name": "x"})
 
     run(world)
@@ -284,8 +289,8 @@ def test_the_recipe_closest_to_the_video_title_is_chosen_on_a_multi_recipe_page(
     assert [r["name"] for r in stored["recipes"]] == ["Tomato Sauce", "Pesto"]
     assert stored["chosen"] == 1
     assert (
-        "Pesto" in non_classify_calls(world.llm)[0].prompt
-        and "Tomato Sauce" not in non_classify_calls(world.llm)[0].prompt
+        "Pesto" in extract_calls(world.llm)[0].prompt
+        and "Tomato Sauce" not in extract_calls(world.llm)[0].prompt
     )
 
 

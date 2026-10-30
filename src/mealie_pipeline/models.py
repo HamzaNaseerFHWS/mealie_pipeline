@@ -73,6 +73,12 @@ def extraction_schema(tag_names: list[str]) -> dict[str, Any]:
     return schema
 
 
+class Chapter(BaseModel):
+    title: str
+    start_s: float
+    end_s: float | None = None
+
+
 class VideoMeta(BaseModel):
     """What the pipeline keeps from yt-dlp's metadata."""
 
@@ -85,6 +91,7 @@ class VideoMeta(BaseModel):
     upload_date: str | None = None
     thumbnail: str | None = None
     webpage_url: str = ""
+    chapters: list[Chapter] = Field(default_factory=list)
 
 
 class ParsedIngredient(BaseModel):
@@ -118,3 +125,26 @@ class Judge(BaseModel):
     """What the independent LLM review answers to "what is missing or wrong?"."""
 
     problems: list[JudgeProblem] = Field(default_factory=list)
+
+
+class OutlinePart(BaseModel):
+    title: str = Field(description="The recipe's name as the video or caption calls it.")
+    start_s: float | None = Field(
+        default=None, description="Where the recipe starts in the video, in seconds."
+    )
+    end_s: float | None = Field(default=None, description="Where it ends, in seconds.")
+    website_url: str | None = Field(default=None, description="A link to this recipe's own web page, if any.")
+    caption_block: int | None = Field(
+        default=None, description="The number of its block in a numbered caption."
+    )
+    is_component_of_other_part: bool = Field(
+        default=False,
+        description="True for something made only to be used inside another dish ('for the marinade').",
+    )
+
+
+class Outline(BaseModel):
+    """The recipes a Video contains, in order."""
+
+    language: Literal["en", "de", "ur", "hi"] = "en"
+    parts: list[OutlinePart]

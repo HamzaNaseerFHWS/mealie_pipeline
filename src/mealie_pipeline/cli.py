@@ -415,6 +415,10 @@ def status(ctx: typer.Context) -> None:
     console = Console(width=120)
     console.print(table)
     console.print(f"Videos: {len(store.videos())}   Recipe Parts: {len(store.parts())}")
+    for video in store.videos():
+        parts = store.video_parts(video.video_key)
+        if len(parts) > 1:
+            console.print(f"  {video.video_key}: {sum(1 for p in parts if p.slug)}/{len(parts)} uploaded")
     retried = sum(1 for p in store.parts() if (p.verify or {}).get("extraction_attempts", 1) > 1)
     held = sum(1 for p in store.parts() if (p.verify or {}).get("outcome") == "review")
     console.print(f"Gate: {held} in the Review Queue, {retried} extracted a second time after a failed check")
