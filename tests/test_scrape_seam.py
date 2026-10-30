@@ -276,10 +276,6 @@ def extract_calls(llm):
     return [c for c in non_classify_calls(llm) if c.task == "extract"]
 
 
-def extract_calls(llm):
-    return [c for c in non_classify_calls(llm) if c.task == "extract"]
-
-
 def test_the_recipe_closest_to_the_video_title_is_chosen_on_a_multi_recipe_page(world: WebWorld):
     world.web.pages[PAGE_URL] = page("two_recipes.html")
     world.info["title"] = "Fresh Pesto in 2 minutes"
