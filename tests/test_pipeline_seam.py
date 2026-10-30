@@ -261,7 +261,7 @@ def test_a_description_without_a_recipe_fails_that_item_and_uploads_nothing(worl
     assert "does not contain a recipe" in result.output
 
 
-def test_no_matching_tag_fails_the_item(world: World):
+def test_no_matching_tag_uploads_with_the_review_tag(world: World):
     recipe = load("llm_extract_okra.json")
     recipe["tag_choices"] = [{"tag": "Made Up Tag", "reason": "x"}]
     world.llm = recipe_llm()
@@ -269,9 +269,9 @@ def test_no_matching_tag_fails_the_item(world: World):
     world.invoke("add", URL)
     result = world.invoke("run")
 
-    assert result.exit_code == 1
-    assert world.mealie.recipes == {}
-    assert world.store().stage_status("part", ITEM_KEY, "tag") == "failed"
+    assert result.exit_code == 0, result.output
+    (uploaded,) = world.mealie.recipes.values()
+    assert [t["name"] for t in uploaded["tags"]] == ["To Review"]
 
 
 def test_an_llm_error_fails_only_that_item_and_the_next_run_does_not_retry_it(world: World):

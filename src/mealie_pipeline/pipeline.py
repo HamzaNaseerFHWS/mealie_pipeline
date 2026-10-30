@@ -22,7 +22,7 @@ from pydantic import ValidationError
 from mealie_pipeline import grounding
 from mealie_pipeline.adapters import Adapters
 from mealie_pipeline.adapters.llm import LLMError, Tier, UsageLimited
-from mealie_pipeline.adapters.mealie import Catalog, Food, Tag, Unit
+from mealie_pipeline.adapters.mealie import Catalog, Food, Unit
 from mealie_pipeline.adapters.video_source import VideoSourceError
 from mealie_pipeline.classify import (
     Classifier,
@@ -53,7 +53,8 @@ from mealie_pipeline.sanity import check_line
 from mealie_pipeline.scoring import apply_judge, decide
 from mealie_pipeline.scrape import WebResult, find_web_recipe
 from mealie_pipeline.settings import Settings, VerifySettings
-from mealie_pipeline.store import EntityKind, StateStore, Status
+from mealie_pipeline.store import EntityKind, RecipePart, StateStore, Status
+from mealie_pipeline.tagging import RecipeFacts, TagRules, choose, contradictions, match_existing, rule_tags
 from mealie_pipeline.url_normalizer import normalize_website
 from mealie_pipeline.verify import Evaluation, evaluate
 
@@ -155,6 +156,8 @@ class Pipeline:
         ) or {}
         proteins = workspace / "config" / "protein_tags.yaml"
         self.proteins = ProteinRules.load(proteins) if proteins.is_file() else None
+        tag_rules = workspace / "config" / "tag_rules.yaml"
+        self.tag_rules = TagRules.load(tag_rules) if tag_rules.is_file() else None
 
     # -- public ---------------------------------------------------------------------------
 
@@ -636,8 +639,16 @@ class Pipeline:
 
     def _tag(self, item_key: str, report: RunReport, dry_run: bool) -> None:
         part = self.store.part(item_key)
-        tags = self._choose_tags(ExtractedRecipe.model_validate(part.extracted))
-        self.store.update_part(item_key, tags=tags)
+        tags = self._choose_tags(part, report)
+        if not tags:  # one retry at the strongest tier, then the `To Review` fallback
+            self._run_extraction(
+                item_key,
+                "strongest",
+                ["none of your tag choices is an existing tag: choose from the allowed tag names"],
+            )
+            self._parse(item_key, report, False)
+            tags = self._choose_tags(self.store.part(item_key), report)
+        self.store.update_part(item_key, tags=tags or [self._review_tag()])
 
     def _sources(self, video_key: str) -> dict[str, str]:
         """The Sources the Evidence may cite: the website recipe (`web`) and the description (`desc`)."""
@@ -685,7 +696,9 @@ class Pipeline:
         part = self.store.part(item_key)
         tags = list(part.tags or [])
         if outcome == "upload_review":
-            tags.append(self._review_tag())
+            review = self._review_tag()
+            if review["id"] not in {t["id"] for t in tags}:
+                tags.append(review)
         if outcome != "fail":  # keep the recipe without its ungrounded ingredients
             self.store.update_part(
                 item_key,
@@ -738,9 +751,11 @@ class Pipeline:
             [f"{p.severity} {p.field}: {p.description}" for p in problems],
         )
 
-    def _review_tag(self) -> dict[str, Any]:
+    def _review_tag(self, *, create: bool = True) -> dict[str, Any]:
         name = self.settings.verify.review_tag
         existing = next((t for t in self.catalog.tags if t.name.casefold() == name.casefold()), None)
+        if existing is None and not create:  # a dry run creates nothing
+            return {"id": "", "name": name, "slug": ""}
         if existing is None:
             existing = self.a.mealie.create_tag(name)  # created once, then found in the catalog
             self.catalog.tags.append(existing)
@@ -802,7 +817,7 @@ class Pipeline:
                 video = self.store.video(part.video_key)
                 recipe = ExtractedRecipe.model_validate(part.extracted)
                 parsed = self._parse_ingredients(recipe, part.video_key, create=False)
-                tags = self._choose_tags(recipe)
+                tags = self._choose_tags(part, None, parsed=parsed) or [self._review_tag(create=False)]
                 # The deterministic Gate only: no judge call, no retry, no tag created.
                 evaluation = evaluate(
                     recipe,
@@ -864,20 +879,59 @@ class Pipeline:
                 ]
         return payload
 
-    def _choose_tags(self, recipe: ExtractedRecipe) -> list[dict[str, Any]]:
-        by_name = {tag_key(t.name): t for t in self.catalog.tags}
-        chosen: list[Tag] = []
+    def _choose_tags(
+        self,
+        part: RecipePart,
+        report: RunReport | None,
+        *,
+        parsed: list[ParsedIngredient] | None = None,
+    ) -> list[dict[str, Any]]:
+        """The recipe's 1-6 existing tags: Rule Tags first, then the LLM's by rank, minus any a Food
+        contradicts. Empty when none survive. `report=None` (a dry run) writes nothing."""
+        recipe = ExtractedRecipe.model_validate(part.extracted)
+        if parsed is None:
+            parsed = [ParsedIngredient.model_validate(p) for p in part.parsed or []]
+        by_key = {tag_key(t.name): t for t in self.catalog.tags}
+        names = [t.name for t in self.catalog.tags]
+        llm: list[str] = []
         for choice in recipe.tag_choices:
-            tag = by_name.get(tag_key(choice.tag))
-            if tag is not None and tag not in chosen:
-                chosen.append(tag)
-        # Protein Tags are Rule Tags: always kept, but only those that already exist in Mealie
-        # (`mp tags protein --apply` is what creates them).
-        proteins = [by_name[tag_key(name)] for name in self._protein_tags(recipe) if tag_key(name) in by_name]
-        chosen = [t for t in chosen if t not in proteins][: MAX_TAGS - len(proteins)] + proteins
-        if not chosen:
-            raise StageFailure("no existing Mealie tag was chosen for this recipe")
-        return [{"id": t.id, "name": t.name, "slug": t.slug} for t in chosen[:MAX_TAGS]]
+            existing = match_existing(choice.tag, names)
+            if existing is None:
+                if report is not None:
+                    self._suggest_tag(choice.tag, part.video_key)
+            else:
+                llm.append(existing)
+        facts = RecipeFacts(
+            recipe.name,
+            [p.food_name for p in parsed],
+            recipe.total_minutes or ((recipe.prep_minutes or 0) + (recipe.cook_minutes or 0)) or None,
+            recipe.language,
+        )
+        # Rule Tags (config rules, then Protein Tags) only name tags that exist in Mealie; `mp doctor`
+        # reports the rest, and `mp tags protein --apply` is what creates Protein Tags.
+        wanted = (rule_tags(facts, self.tag_rules) if self.tag_rules else []) + self._protein_tags(recipe)
+        rules = [e for name in wanted if (e := match_existing(name, names)) is not None]
+        chosen = choose(
+            rules, llm, max_tags=len(rules) + len(llm)
+        )  # capped below, once contradictions free slots
+        if self.tag_rules:
+            for tag, food in contradictions(chosen, facts, self.tag_rules).items():
+                chosen.remove(tag)
+                if report is not None:
+                    report.warnings.append(f"{part.item_key}: removed tag {tag!r}: the recipe has {food}")
+        return [
+            {"id": by_key[tag_key(t)].id, "name": by_key[tag_key(t)].name, "slug": by_key[tag_key(t)].slug}
+            for t in chosen[:MAX_TAGS]
+        ]
+
+    def _suggest_tag(self, name: str, video_key: str) -> None:
+        """A tag the LLM chose that Mealie does not have goes to `reports/suggested_tags.csv`, once."""
+        path = self.workspace / "reports" / "suggested_tags.csv"
+        if path.exists():
+            with path.open(encoding="utf-8-sig", newline="") as handle:
+                if any(tag_key(row["name"]) == tag_key(name) for row in csv.DictReader(handle)):
+                    return
+        self._log_created("suggested_tags.csv", name, video_key)
 
     def _protein_tags(self, recipe: ExtractedRecipe) -> list[str]:
         if self.proteins is None:
