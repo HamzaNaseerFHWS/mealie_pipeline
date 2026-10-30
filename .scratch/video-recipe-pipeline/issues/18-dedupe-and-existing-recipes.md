@@ -8,7 +8,7 @@
 
 **Blocked by:** 05, 09, 22
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `spec.md` module 14; `PIPELINE_SPEC.md` §3.3.
 
