@@ -265,6 +265,21 @@ def test_review_skip_saves_nothing_and_decided_videos_are_not_shown_again(world:
     assert "Nothing to review" in again.output
 
 
+def test_recipe_requests_do_not_use_up_the_limit_meant_for_videos(world: World):
+    store = world.store()
+    for n in range(3):  # registered first, so they come first in the batch
+        key = f"web:r{n}"
+        store.add_video(key, "web", f"r{n}", f"https://example.com/{n}", f"https://example.com/{n}")
+        store.set_metadata(key, {"title": f"Dal {n}", "webpage_url": f"https://example.com/{n}"})
+        store.record("video", key, "metadata", "done")
+    world.invoke("add", URL)
+
+    world.invoke("run", "--stages", "metadata,classify", "--limit", "2")
+
+    assert [r["video_key"] for r in rows(world)] == [VIDEO_KEY]
+    assert rows(world)[0]["label"] == "recipe"
+
+
 def test_recipe_requests_are_not_classified_and_pass_straight_through(world: World):
     world.invoke("add", URL)
     store = world.store()

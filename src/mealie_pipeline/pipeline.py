@@ -240,6 +240,8 @@ class Pipeline:
                     for key in batch
                     if self._let_through(key if kind == "video" else self.store.part(key).video_key)
                 ]
+            if stage == "classify":  # Recipe Requests are never classified; they must not use up `--limit`
+                batch = [key for key in batch if self.store.video(key).platform != "web"]
             if stage == "scrape":  # only Videos that still have a Part to import (not already in Mealie)
                 wanted_videos = {
                     p.video_key
