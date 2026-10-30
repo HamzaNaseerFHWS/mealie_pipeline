@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from mealie_pipeline.models import VideoMeta
+from mealie_pipeline.models import Chapter, VideoMeta
 
 
 class VideoSourceError(Exception):
@@ -92,6 +92,11 @@ def meta_from_info(info: dict[str, Any]) -> VideoMeta:
         upload_date=info.get("upload_date"),
         thumbnail=info.get("thumbnail"),
         webpage_url=info.get("webpage_url") or "",
+        chapters=[
+            Chapter(title=c.get("title") or "", start_s=c["start_time"], end_s=c.get("end_time"))
+            for c in info.get("chapters") or []
+            if c.get("start_time") is not None
+        ],
     )
 
 
