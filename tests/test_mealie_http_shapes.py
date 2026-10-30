@@ -168,6 +168,34 @@ def test_unreachable_server_retries_three_times_then_explains_tailscale():
     assert "cannot reach Mealie at http://mealie.invalid:9000: is Tailscale connected?" in str(err.value)
 
 
+def test_a_read_timeout_on_a_read_is_retried_then_reported_as_unreachable_not_a_traceback():
+    attempts: list[int] = []
+
+    def silent(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    gw = MealieHttpGateway("http://mealie:9000", TOKEN, sleep=lambda _s: None)
+    gw._client = httpx.Client(base_url=gw.base_url, transport=httpx.MockTransport(silent))
+    with pytest.raises(MealieUnreachableError):
+        gw.catalog()
+    assert len(attempts) == 4
+
+
+def test_a_read_timeout_on_a_write_is_not_repeated():
+    attempts: list[int] = []
+
+    def silent(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    gw = MealieHttpGateway("http://mealie:9000", TOKEN, sleep=lambda _s: None)
+    gw._client = httpx.Client(base_url=gw.base_url, transport=httpx.MockTransport(silent))
+    with pytest.raises(MealieUnreachableError):
+        gw.create_recipe("Dal")
+    assert len(attempts) == 1  # the recipe may already exist; a second POST could make a duplicate
+
+
 def test_a_connection_error_followed_by_success_is_retried_transparently():
     calls = {"n": 0}
 

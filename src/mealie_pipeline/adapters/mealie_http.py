@@ -55,6 +55,16 @@ class MealieHttpGateway:
                 last = err
                 if attempt < self._max_retries:
                     self._sleep(self._backoff * 2**attempt)
+            except httpx.TimeoutException as err:
+                # Mealie took the request but never answered. A read is safe to ask again; a write may have
+                # gone through, so it is not repeated (uploads find their recipe by link on the next run).
+                last = err
+                if method != "GET":
+                    raise MealieUnreachableError(
+                        self.base_url, f"no answer: {redact(str(err), self._token)}"
+                    ) from err
+                if attempt < self._max_retries:
+                    self._sleep(self._backoff * 2**attempt)
         else:
             raise MealieUnreachableError(self.base_url, redact(str(last), self._token)) from last
         if response.is_success:
