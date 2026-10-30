@@ -9,6 +9,7 @@ Playwright's sync API only works on the thread that started it, while `scrape` m
 workers, so every call runs on one browser thread.
 """
 
+import contextlib
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -111,10 +112,9 @@ class PlaywrightBrowser:
             try:
                 page = self._page()
                 response = page.goto(url, wait_until="domcontentloaded")
-                try:  # link-in-bio buttons and recipe cards are often drawn after the first paint
+                # link-in-bio buttons and recipe cards are often drawn after the first paint
+                with contextlib.suppress(PlaywrightError):
                     page.wait_for_load_state("networkidle", timeout=10_000)
-                except PlaywrightError:
-                    pass
                 status = response.status if response else 0
                 return RenderedPage(page.url, status, page.title(), page.content())
             except PlaywrightError:  # unreachable, timed out: the caller treats it like a failed fetch

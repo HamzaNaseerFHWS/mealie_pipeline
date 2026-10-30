@@ -178,7 +178,11 @@ def test_bio_links(fixture, page_url, expected):
 
 
 def test_relative_links_on_a_bio_page_are_its_own_and_dropped():
-    html = '<a href="/s/privacy">Privacy</a><a href="https://chef.example/dal/">Dal</a><a href="mailto:x@y.z">Mail</a>'
+    html = (
+        '<a href="/s/privacy">Privacy</a>'
+        '<a href="https://chef.example/dal/">Dal</a>'
+        '<a href="mailto:x@y.z">Mail</a>'
+    )
     assert bio_links(html, "https://linktr.ee/chef") == [BioLink("https://chef.example/dal/", "Dal")]
 
 
