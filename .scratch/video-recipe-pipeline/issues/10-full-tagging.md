@@ -9,7 +9,7 @@
 
 **Blocked by:** 09, 25
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `spec.md` module 11; `PIPELINE_SPEC.md` §8. The real rule mapping is confirmed in wayfinder ticket 19. Ship `tag_rules.yaml` with commented examples that use placeholder tag names, and validate at startup that every named tag exists.
 
