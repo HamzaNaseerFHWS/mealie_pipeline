@@ -12,6 +12,7 @@ REPORT_COLUMNS = [
     "item_key",
     "video_url",
     "platform",
+    "video_label",
     *(f"{stage}_status" for stage in STAGES),
     "score",
     "outcome",
@@ -41,7 +42,8 @@ def created_food_counts(workspace: Path) -> dict[str, int]:
 def write_report(store: StateStore, workspace: Path) -> Path:
     """One row per Recipe Part, plus one row per Video that has no Recipe Part yet (e.g. metadata failed).
 
-    Columns: item_key, video_url, platform, `<stage>_status` for every stage (empty = not reached),
+    Columns: item_key, video_url, platform, video_label (from `classify`; empty if not classified),
+    `<stage>_status` for every stage (empty = not reached),
     score / outcome / failed_checks / extraction_attempts (the Gate), failure_reason (the last error
     of the first failed or held-back stage), mealie_slug, mealie_url, created_foods
     (Foods first created for this Video), tags (`;`-separated) and warnings (such as image_missing).
@@ -66,6 +68,7 @@ def write_report(store: StateStore, workspace: Path) -> Path:
                     "item_key": item_key,
                     "video_url": video.canonical_url,
                     "platform": video.platform,
+                    "video_label": (video.classification or {}).get("label", ""),
                     **statuses,
                     "score": verify.get("score", ""),
                     "outcome": verify.get("outcome", ""),

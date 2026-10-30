@@ -78,6 +78,7 @@ uv run mp retry <item_key|video_key> [--stage tag]   # run a failed item again (
 uv run mp reset <stage> [--failed-only]              # run a stage (and the later ones) again for everything
 uv run mp run --mode update          # after a reset: PATCH recipes already in Mealie instead of skipping them
 uv run mp report                     # writes reports/report.csv
+uv run mp review classify            # decide the Videos the classifier was unsure about
 ```
 
 Ctrl+C finishes the item in progress, then stops; the next `mp run` continues. A failed item is never retried by itself.
@@ -87,6 +88,7 @@ Ctrl+C finishes the item in progress, then stops; the next `mp run` continues. A
 | Column | Meaning |
 |---|---|
 | `item_key`, `video_url`, `platform` | identity of the Recipe Part and where it came from |
+| `video_label` | the `classify` verdict: `recipe`, `recipe_partial`, `restaurant_or_place`, `ad_or_product`, `eating_or_review`, `not_food`, `uncertain`; empty = not classified (Recipe Requests are never classified) |
 | `metadata_status` … `upload_status` | one column per stage (`metadata`, `extract`, `parse`, `tag`, `verify`, `upload`): `pending`, `running`, `done`, `failed`, `skipped`, `review`; empty = not reached |
 | `score`, `outcome`, `failed_checks`, `extraction_attempts` | the Gate: Quality Score 0-100, `upload` / `upload_review` / `review`, the IDs of failed checks (H1-H5, S1-S7), and 2 when the recipe was extracted a second time after failing |
 | `failure_reason` | `<stage>: <last error>` of the first failed or held-back stage |
@@ -94,6 +96,10 @@ Ctrl+C finishes the item in progress, then stops; the next `mp run` continues. A
 | `created_foods` | Foods first created for this Video |
 | `tags` | tag names, `;`-separated |
 | `warnings` | for example `image_missing` |
+
+## Is it a recipe? (`classify` stage)
+
+After `metadata`, Videos are classified in batches (20 per Claude call, fast tier) using rule signals from `config/classify_rules.yaml`. Only `recipe` and `recipe_partial` go on; everything else is `skipped` with its label. An unsure or low-confidence (< 0.7) Video is asked once more with its subtitles; if still unsure it waits for `mp review classify`. Every verdict is written to `reports/classification.csv`; fill in its `override` column with a label and the next run uses it without asking Claude again. Thresholds and batch size are in `config/settings.yaml` under `classify:`.
 
 ## The Gate (`verify` stage)
 

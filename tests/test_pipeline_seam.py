@@ -81,11 +81,11 @@ class World:
         self.images = FakeImageDownloader({MAXRES: make_jpeg(1280)})
         self.videos = FakeVideoSource({CANONICAL: load("youtube_info_okra.json")})
 
-    def invoke(self, *args: str):
+    def invoke(self, *args: str, input: str | None = None):
         adapters = fake_adapters(
             mealie=self.mealie, llm=self.llm, videos=self.videos, images=self.images, engine=ENGINE
         )
-        return CliRunner().invoke(app, ["--workspace", str(self.workspace), *args], obj=adapters)
+        return CliRunner().invoke(app, ["--workspace", str(self.workspace), *args], obj=adapters, input=input)
 
     def store(self) -> StateStore:
         return StateStore(self.workspace / "pipeline.db")

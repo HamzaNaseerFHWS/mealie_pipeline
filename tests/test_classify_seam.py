@@ -93,6 +93,7 @@ def test_a_restaurant_is_skipped_with_its_label_and_never_reaches_extract(world:
     with (world.workspace / "reports" / "report.csv").open(encoding="utf-8-sig", newline="") as handle:
         (row,) = list(csv.DictReader(handle))
     assert row["classify_status"] == "skipped" and row["extract_status"] == ""
+    assert row["video_label"] == "restaurant_or_place"
     assert row["failure_reason"] == ""
 
 
