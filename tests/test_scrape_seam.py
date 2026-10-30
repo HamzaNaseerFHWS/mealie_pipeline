@@ -7,11 +7,10 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from mealie_pipeline.adapters.fake_llm import FakeLLM
 from mealie_pipeline.adapters.fake_web import FakeWebFetcher
 from mealie_pipeline.adapters.ingredient_engine import EngineParse, FakeIngredientEngine
 from mealie_pipeline.cli import app
-from tests.helpers import fake_adapters
+from tests.helpers import fake_adapters, non_classify_calls, recipe_llm
 from tests.images import make_jpeg
 from tests.test_pipeline_seam import (
     CANONICAL,
@@ -97,7 +96,7 @@ class WebWorld(World):
     def __init__(self, tmp_path):
         super().__init__(tmp_path)
         self.web = FakeWebFetcher({PAGE_URL: page("wprm_graph.html")})
-        self.llm = FakeLLM()
+        self.llm = recipe_llm()
         self.llm.script("extract", web_recipe())
         self.images.files[PAGE_IMAGE] = make_jpeg(1600)
         self.info = copy.deepcopy(load("youtube_info_okra.json"))
@@ -151,7 +150,7 @@ def test_a_description_that_only_links_to_the_blog_imports_the_websites_recipe(w
     assert [i["originalText"] for i in recipe["recipeIngredient"]][0] == "250 g okra (bhindi)"
     assert recipe["recipeInstructions"][2]["text"].startswith("Add okra and potato")
 
-    (call,) = world.llm.calls
+    (call,) = non_classify_calls(world.llm)
     assert "[SRC:web]" in call.prompt and "250 g okra (bhindi)" in call.prompt
     assert call.prompt.index("[SRC:web]") < call.prompt.index("[SRC:desc]")  # the website ranks first
     assert world.web.fetched == [PAGE_URL]
@@ -173,7 +172,7 @@ def test_the_website_image_is_uploaded_instead_of_the_thumbnail(world: WebWorld)
 def test_the_prompt_tells_the_llm_to_keep_the_websites_quantities_and_only_fill_gaps(world: WebWorld):
     run(world)
 
-    (call,) = world.llm.calls
+    (call,) = non_classify_calls(world.llm)
     assert "Keep the website's quantities and wording and only fill gaps" in call.prompt
     system_prompt = (Path(__file__).parents[1] / "prompts" / "extract.md").read_text(encoding="utf-8")
     assert "[SRC:web]" in system_prompt and "follow its" in system_prompt
@@ -202,7 +201,7 @@ def test_a_short_link_is_expanded_and_the_final_url_recorded(world: WebWorld):
 def test_a_short_link_that_leads_to_a_shop_is_dropped_after_expansion(world: WebWorld):
     world.describe("Get the pan: https://geni.us/pan")
     world.web.redirects["https://geni.us/pan"] = "https://www.amazon.com/dp/B000123"
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
     world.llm.script("extract", load("llm_extract_okra.json"))
     world.info["description"] += "\n" + load("youtube_info_okra.json")["description"]
 
@@ -215,7 +214,7 @@ def test_a_short_link_that_leads_to_a_shop_is_dropped_after_expansion(world: Web
 
 def test_social_and_affiliate_links_are_never_fetched(world: WebWorld):
     world.describe("Follow https://www.instagram.com/chef and buy https://amzn.to/3abc")
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
 
     run(world)
 
@@ -236,7 +235,7 @@ def test_the_recipe_link_in_the_creators_pinned_comment_is_used(world: WebWorld)
 def test_a_blocked_page_is_marked_for_the_browser_fallback_and_the_video_still_imports(world: WebWorld):
     world.describe(f"Recipe: {PAGE_URL}\n" + load("youtube_info_okra.json")["description"])
     world.web.blocked[PAGE_URL] = "needs_browser"
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
     world.llm.script("extract", load("llm_extract_okra.json"))
 
     result = run(world)
@@ -244,7 +243,7 @@ def test_a_blocked_page_is_marked_for_the_browser_fallback_and_the_video_still_i
     assert result.exit_code == 0, result.output  # not a failure
     assert "needs_browser" in result.output
     assert web_json(world)["reason"] == "needs_browser"
-    assert "[SRC:web]" not in world.llm.calls[0].prompt
+    assert "[SRC:web]" not in non_classify_calls(world.llm)[0].prompt
     assert len(world.mealie.recipes) == 1  # imported from the description as before
     assert world.store().stage_status("video", VIDEO_KEY, "scrape") == "done"
 
@@ -252,13 +251,13 @@ def test_a_blocked_page_is_marked_for_the_browser_fallback_and_the_video_still_i
 def test_a_page_with_no_recipe_is_not_used(world: WebWorld):
     world.web.pages[PAGE_URL] = page("no_recipe.html")  # plain article without an ingredient list
     world.describe(f"Recipe: {PAGE_URL}\n" + load("youtube_info_okra.json")["description"])
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
     world.llm.script("extract", load("llm_extract_okra.json"))
 
     run(world)
 
     assert web_json(world)["reason"] == "no_recipe"
-    assert "[SRC:web]" not in world.llm.calls[0].prompt
+    assert "[SRC:web]" not in non_classify_calls(world.llm)[0].prompt
 
 
 def test_unstructured_page_text_that_mentions_ingredients_is_a_lower_priority_web_source(world: WebWorld):
@@ -268,7 +267,7 @@ def test_unstructured_page_text_that_mentions_ingredients_is_a_lower_priority_we
 
     run(world)
 
-    call = world.llm.calls[0]
+    call = non_classify_calls(world.llm)[0]
     assert "[SRC:web]" in call.prompt and "unstructured text from the creator's website" in call.prompt
     assert web_json(world)["recipes"][0]["extraction_method"] == "main-text"
 
@@ -276,7 +275,7 @@ def test_unstructured_page_text_that_mentions_ingredients_is_a_lower_priority_we
 def test_the_recipe_closest_to_the_video_title_is_chosen_on_a_multi_recipe_page(world: WebWorld):
     world.web.pages[PAGE_URL] = page("two_recipes.html")
     world.info["title"] = "Fresh Pesto in 2 minutes"
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
     world.llm.script("extract", {"is_recipe": False, "name": "x"})
 
     run(world)
@@ -284,18 +283,21 @@ def test_the_recipe_closest_to_the_video_title_is_chosen_on_a_multi_recipe_page(
     stored = web_json(world)
     assert [r["name"] for r in stored["recipes"]] == ["Tomato Sauce", "Pesto"]
     assert stored["chosen"] == 1
-    assert "Pesto" in world.llm.calls[0].prompt and "Tomato Sauce" not in world.llm.calls[0].prompt
+    assert (
+        "Pesto" in non_classify_calls(world.llm)[0].prompt
+        and "Tomato Sauce" not in non_classify_calls(world.llm)[0].prompt
+    )
 
 
 def test_extract_waits_for_scrape(world: WebWorld):
     world.invoke("add", URL)
     world.invoke("run", "--stages", "metadata,extract")
 
-    assert world.llm.calls == []  # scrape has not run, so the Video is not extracted yet
+    assert non_classify_calls(world.llm) == []  # scrape has not run, so the Video is not extracted yet
 
     world.invoke("run")
 
-    assert len(world.llm.calls) == 1 and len(world.mealie.recipes) == 1
+    assert len(non_classify_calls(world.llm)) == 1 and len(world.mealie.recipes) == 1
 
 
 def test_the_page_is_fetched_once_even_if_the_run_is_repeated(world: WebWorld):
@@ -314,7 +316,7 @@ def test_a_video_already_in_mealie_is_not_scraped_or_extracted(world: WebWorld):
     result = run(world)
 
     assert result.exit_code == 0, result.output
-    assert world.web.fetched == [] and world.web.expanded == [] and world.llm.calls == []
+    assert world.web.fetched == [] and world.web.expanded == [] and non_classify_calls(world.llm) == []
     assert world.store().stage_status("video", VIDEO_KEY, "scrape") is None
 
 

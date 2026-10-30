@@ -1,0 +1,72 @@
+# Rule signals for the `classify` stage. They are hints handed to the classifier (Claude, fast tier),
+# never decisions on their own. Each signal is a list of regular expressions, matched case-insensitively
+# against the Video's title and caption/description. A signal fires on its first matching pattern.
+#
+# Edit freely: add words in other languages, or patterns that your lists show often.
+# Calibration against a hand-labelled sample happens in ticket 20.
+
+pro:
+  recipe_word:
+    - '\brecipes?\b'
+    - '\bhow to (make|cook|bake)\b'
+    - '\brezept(e)?\b'
+    - '\btark(ee|i)b\b'          # Urdu/Hindi "method, recipe"
+    - '\bvidhi\b'                # Hindi "method"
+    - 'ترکیب'
+    - 'रेसिपी'
+    - 'विधि'
+  ingredients_word:
+    - '\bingredients?\b'
+    - '\bzutaten\b'
+    - '\bajz(a|aa)\b'            # Urdu "ingredients"
+    - '\bsamagri\b'              # Hindi "ingredients"
+    - 'اجزا'
+    - 'सामग्री'
+  quantity_unit:
+    - '\b\d+(?:[.,/]\d+)?\s*(?:g|gr|grams?|kg|mg|ml|l|liters?|litres?|oz|lbs?|pounds?|tbsps?|tsps?|tbs|cups?|el|tl|prise|pinch|cloves?|stück)\b'
+    - '[½¼¾⅓⅔]\s*(?:cups?|tbsps?|tsps?|tl|el)\b'
+  cooking_verb:
+    - '\b(bake|baked|baking|fry|fried|frying|saute|sauté|simmer|boil|roast|grill|stir|whisk|knead|marinate|chop|mix|blend|preheat)\b'
+    - '\b(backen|braten|kochen|anbraten|rühren|schneiden|vermengen|köcheln)\b'
+    - '\b(bhoon|bhuno|tadka|tarka|dum)\b'
+  recipe_link:
+    - '\bfull recipe\b'
+    - '\brecipe (is )?(on|at|in) (my|the) (blog|website|site|bio|description|comments?)\b'
+    - '\blink in (my )?bio\b'
+    - '\brezept (im|in der|auf (meinem|dem)) (link|bio|blog)\b'
+  recipe_hashtag:
+    - '#\w*recipes?\b'
+    - '#\w*rezepte?\b'
+    - '#(homecooking|homemade|cookingathome|easycooking|foodprep|mealprep|bakingfromscratch|kochen|backen)\b'
+
+anti:
+  location_pin:
+    - '📍'
+    - '\blocated (in|at)\b'
+    - '\b(visit us|come visit|find us at)\b'
+  address_or_hours:
+    - '\b(opening hours|open daily|open (mon|tue|wed|thu|fri|sat|sun)\w*|öffnungszeiten|geöffnet)\b'
+    - '\b\d{1,2}(:\d{2})?\s*(am|pm)\s*[-–]\s*\d{1,2}(:\d{2})?\s*(am|pm)\b'
+    - '\b\d+\s+\w+\s+(street|st\.|road|rd\.|avenue|ave\.|boulevard|blvd)\b'
+    - '\b\w+(straße|strasse)\s+\d+\b'
+  menu_or_reservation:
+    - '\bmenu\b'
+    - '\breservations?\b'
+    - '\bbook a table\b'
+    - '\b(speisekarte|reservierung)\b'
+  city_eats_hashtag:
+    - '#(?!treats\b)\w{3,}eats\b'
+    - '#foodie\w+'
+    - '#\w+(foodguide|foodspots?|restaurants?)\b'
+  price:
+    - '[$€£₹]\s?\d'
+    - '\b\d+(?:[.,]\d{2})?\s?(€|eur|euro|usd|dollars?|rs\.?|pkr|inr|rupees)(?!\w)'
+    - '\brs\.?\s?\d'
+  ad_or_sponsored:
+    - '#ad\b'
+    - '#(sponsored|werbung|anzeige)\b'
+    - '\bsponsored\b'
+    - '\bpaid partnership\b'
+    - '\buse (my )?code\b'
+    - '\bdiscount code\b'
+    - '\b(werbung|anzeige|rabattcode)\b'

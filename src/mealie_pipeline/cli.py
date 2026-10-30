@@ -12,6 +12,15 @@ from rich.console import Console
 from rich.table import Table
 
 from mealie_pipeline.adapters import Adapters, build_adapters
+from mealie_pipeline.classify import (
+    REVIEW_KEYS,
+    ClassifyRules,
+    Verdict,
+    review_queue,
+    set_override,
+    video_meta,
+    write_classification_csv,
+)
 from mealie_pipeline.collect import sync_lists
 from mealie_pipeline.doctor import exit_code, render, run_doctor
 from mealie_pipeline.find import SitePolicy
@@ -256,7 +265,7 @@ def run(
         ),
     ] = None,
 ) -> None:
-    """Take every registered Video through metadata, extract, parse, tag and upload."""
+    """Take every registered Video through metadata, classify, extract, parse, tag and upload."""
     app_ctx: AppContext = ctx.obj
     worker_count = workers or app_ctx.settings.run.workers
     chosen = [s.strip() for s in stages.split(",")] if stages else None
@@ -323,6 +332,8 @@ def run(
             f"{len(report.already_in_mealie)} already in Mealie (skipped), "
             f"{len(report.upgraded_existing)} existing recipes upgraded"
         )
+    for line in report.not_recipes:
+        typer.echo(f"skipped {line}")
     for line in report.review:
         typer.echo(f"REVIEW {line}")
     for line in report.failed:
@@ -633,3 +644,43 @@ def requests_reset(
     requests, workspace = _open_requests(ctx)
     typer.echo(f"{requests.reset_failed()} failed request(s) back to pending")
     write_requests_report(requests, workspace)
+
+
+review_app = typer.Typer(help="Decide the Videos the pipeline could not sort by itself.")
+app.add_typer(review_app, name="review")
+
+
+@review_app.command("classify")
+def review_classify(ctx: typer.Context) -> None:
+    """Walk the Videos the classifier was unsure about; each answer is saved as an Override."""
+    app_ctx: AppContext = ctx.obj
+    store = _open_pipeline(app_ctx).store
+    rules = ClassifyRules.load(app_ctx.workspace / "config" / "classify_rules.yaml")
+    path = write_classification_csv(store, app_ctx.workspace / "reports" / "classification.csv", rules)
+    queue = review_queue(store, path, app_ctx.settings.classify.confidence_threshold)
+    if not queue:
+        typer.echo("Nothing to review: no unsure Videos without an override.")
+        return
+    keys = ", ".join(f"{k}={label}" for k, label in REVIEW_KEYS.items())
+    typer.echo(f"{len(queue)} Video(s) to review. Keys: {keys}, s=skip for now, q=quit")
+    decided = 0
+    for number, video in enumerate(queue, start=1):
+        meta = video_meta(video)
+        verdict = Verdict.from_dict(video.classification or {"label": "uncertain"})
+        typer.echo(f"\n[{number}/{len(queue)}] {video.canonical_url}")
+        typer.echo(f"Title:   {meta.title}")
+        typer.echo(f"Creator: {meta.uploader}")
+        typer.echo(f"Caption: {meta.description.strip()[:300]}")
+        typer.echo(f"Classifier: {verdict.label} ({verdict.confidence:.2f}): {'; '.join(verdict.reasons)}")
+        while True:
+            answer = typer.prompt("Label", default="s", show_default=False).strip().lower()
+            if answer in REVIEW_KEYS or answer in ("s", "q"):
+                break
+            typer.echo(f"Press one of: {', '.join(REVIEW_KEYS)}, s, q")
+        if answer == "q":
+            break
+        if answer == "s":
+            continue
+        set_override(path, video.video_key, REVIEW_KEYS[answer])
+        decided += 1
+    typer.echo(f"\n{decided} override(s) saved to {path.name}. Run `mp run` to continue with them.")

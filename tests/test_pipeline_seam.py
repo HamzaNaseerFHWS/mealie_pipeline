@@ -7,7 +7,6 @@ import pytest
 from typer.testing import CliRunner
 
 from mealie_pipeline.adapters.downloader import FakeImageDownloader
-from mealie_pipeline.adapters.fake_llm import FakeLLM
 from mealie_pipeline.adapters.fake_mealie import FakeMealie
 from mealie_pipeline.adapters.fake_video_source import FakeVideoSource
 from mealie_pipeline.adapters.ingredient_engine import EngineParse, FakeIngredientEngine
@@ -15,7 +14,7 @@ from mealie_pipeline.adapters.llm import LLMError, UsageLimited
 from mealie_pipeline.cli import app
 from mealie_pipeline.errors import MealieHttpError
 from mealie_pipeline.store import StateStore
-from tests.helpers import fake_adapters
+from tests.helpers import fake_adapters, non_classify_calls, recipe_llm
 from tests.images import make_jpeg
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -77,16 +76,16 @@ class World:
             foods=["Salt", "onion"],
             units=["gram", "tablespoon"],
         )
-        self.llm = FakeLLM()
+        self.llm = recipe_llm()
         self.llm.script("extract", load("llm_extract_okra.json"))
         self.images = FakeImageDownloader({MAXRES: make_jpeg(1280)})
         self.videos = FakeVideoSource({CANONICAL: load("youtube_info_okra.json")})
 
-    def invoke(self, *args: str):
+    def invoke(self, *args: str, input: str | None = None):
         adapters = fake_adapters(
             mealie=self.mealie, llm=self.llm, videos=self.videos, images=self.images, engine=ENGINE
         )
-        return CliRunner().invoke(app, ["--workspace", str(self.workspace), *args], obj=adapters)
+        return CliRunner().invoke(app, ["--workspace", str(self.workspace), *args], obj=adapters, input=input)
 
     def store(self) -> StateStore:
         return StateStore(self.workspace / "pipeline.db")
@@ -159,7 +158,7 @@ def test_a_second_run_makes_no_new_writes_and_no_new_llm_calls(world: World):
     before = {slug: json.dumps(r, sort_keys=True) for slug, r in world.mealie.recipes.items()}
     food_count, llm_calls, metadata_calls = (
         len(world.mealie.foods),
-        len(world.llm.calls),
+        len(non_classify_calls(world.llm)),
         len(world.videos.calls),
     )
 
@@ -169,7 +168,7 @@ def test_a_second_run_makes_no_new_writes_and_no_new_llm_calls(world: World):
     assert again.exit_code == 0, again.output
     assert {slug: json.dumps(r, sort_keys=True) for slug, r in world.mealie.recipes.items()} == before
     assert len(world.mealie.foods) == food_count
-    assert (len(world.llm.calls), len(world.videos.calls)) == (llm_calls, metadata_calls)
+    assert (len(non_classify_calls(world.llm)), len(world.videos.calls)) == (llm_calls, metadata_calls)
     assert len(world.store().videos()) == 1
 
 
@@ -190,7 +189,7 @@ def test_the_llm_is_asked_for_existing_tags_only_using_the_description(world: Wo
     world.invoke("add", URL)
     world.invoke("run")
 
-    (call,) = world.llm.calls
+    (call,) = non_classify_calls(world.llm)
     assert call.task == "extract" and call.tier == "strong"
     assert "[SRC:desc]" in call.prompt and "250 g okra (bhindi)" in call.prompt
     assert call.schema["$defs"]["TagChoice"]["properties"]["tag"]["enum"] == ["Breakfast", "Dinner", "Vegan"]
@@ -251,7 +250,7 @@ def test_a_missing_maxres_thumbnail_falls_back_to_hqdefault(world: World):
 
 
 def test_a_description_without_a_recipe_fails_that_item_and_uploads_nothing(world: World):
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
     world.llm.script("extract", {"is_recipe": False, "name": "Vlog"})
     world.invoke("add", URL)
     result = world.invoke("run")
@@ -265,7 +264,7 @@ def test_a_description_without_a_recipe_fails_that_item_and_uploads_nothing(worl
 def test_no_matching_tag_fails_the_item(world: World):
     recipe = load("llm_extract_okra.json")
     recipe["tag_choices"] = [{"tag": "Made Up Tag", "reason": "x"}]
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
     world.llm.script("extract", recipe)
     world.invoke("add", URL)
     result = world.invoke("run")
@@ -276,18 +275,18 @@ def test_no_matching_tag_fails_the_item(world: World):
 
 
 def test_an_llm_error_fails_only_that_item_and_the_next_run_does_not_retry_it(world: World):
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
     world.llm.script("extract", LLMError("claude failed: boom"))
     world.invoke("add", URL)
     first = world.invoke("run")
     second = world.invoke("run")
 
     assert first.exit_code == 1 and "claude failed: boom" in first.output
-    assert second.exit_code == 0 and len(world.llm.calls) == 1
+    assert second.exit_code == 0 and len(non_classify_calls(world.llm)) == 1
 
 
 def test_a_usage_limit_stops_the_run_and_leaves_the_item_pending(world: World):
-    world.llm = FakeLLM()
+    world.llm = recipe_llm()
     world.llm.script("extract", UsageLimited("usage limit reached"))
     world.invoke("add", URL)
     result = world.invoke("run")

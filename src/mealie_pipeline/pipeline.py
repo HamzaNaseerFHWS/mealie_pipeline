@@ -1,4 +1,5 @@
-"""The Stage Runner for the tracer-bullet path: metadata -> extract -> parse -> tag -> upload.
+"""The Stage Runner: metadata -> classify -> linkcheck -> scrape -> extract -> parse -> tag -> verify
+-> upload.
 
 Each stage is a function over the State Store with an `Adapters` bundle. A failure in one entity is
 recorded on its Stage Record and never stops the stage. Re-running changes nothing that is `done`.
@@ -23,6 +24,16 @@ from mealie_pipeline.adapters import Adapters
 from mealie_pipeline.adapters.llm import LLMError, Tier, UsageLimited
 from mealie_pipeline.adapters.mealie import Catalog, Food, Tag, Unit
 from mealie_pipeline.adapters.video_source import VideoSourceError
+from mealie_pipeline.classify import (
+    Classifier,
+    ClassifyInput,
+    ClassifyRules,
+    Verdict,
+    read_overrides,
+    signals,
+    video_meta,
+    write_classification_csv,
+)
 from mealie_pipeline.errors import MealieError
 from mealie_pipeline.existing_links import build_link_set
 from mealie_pipeline.find import single_recipe
@@ -45,14 +56,16 @@ from mealie_pipeline.store import EntityKind, StateStore, Status
 from mealie_pipeline.url_normalizer import normalize_website
 from mealie_pipeline.verify import Evaluation, evaluate
 
-STAGES = ["metadata", "linkcheck", "scrape", "extract", "parse", "tag", "verify", "upload"]
+STAGES = ["metadata", "classify", "linkcheck", "scrape", "extract", "parse", "tag", "verify", "upload"]
 # Stages that run once per Video; the rest run per Recipe Part.
-VIDEO_STAGES = {"metadata", "scrape"}
-# The stage that must be done first for the same entity. Recipe Parts exist only once their Video's
-# metadata is done, so `linkcheck` has no prerequisite. `scrape` (per Video) waits for a Part's
-# `linkcheck`, and `extract` waits for its Part's `linkcheck` and its Video's `scrape`.
+VIDEO_STAGES = {"metadata", "classify", "scrape"}
+# The stage that must be done first for the same entity. A Video's Recipe Parts exist only once
+# `classify` let it through (a Recipe Request's from the start), so `linkcheck` has no prerequisite.
+# `scrape` (per Video) waits for a Part's `linkcheck`, and `extract` waits for its Part's `linkcheck`
+# and its Video's `scrape`. Every stage after `classify` takes only Videos it let through.
 PREREQUISITE: dict[str, str | None] = {
     "metadata": None,
+    "classify": "metadata",
     "linkcheck": None,
     "scrape": "metadata",
     "extract": "linkcheck",
@@ -85,6 +98,7 @@ class RunReport:
     warnings: list[str] = field(default_factory=list)
     review: list[str] = field(default_factory=list)
     already_in_mealie: list[str] = field(default_factory=list)
+    not_recipes: list[str] = field(default_factory=list)  # skipped by `classify`, with their label
     upgraded_existing: list[str] = field(default_factory=list)
     dry_run_files: list[Path] = field(default_factory=list)
     stopped: str | None = None
@@ -96,7 +110,14 @@ class RunReport:
 
     def sort_lines(self) -> None:
         """Workers finish in any order; the report lists items in key order, as a single worker would."""
-        lists = (self.failed, self.review, self.already_in_mealie, self.upgraded_existing, self.warnings)
+        lists = (
+            self.failed,
+            self.review,
+            self.already_in_mealie,
+            self.upgraded_existing,
+            self.warnings,
+            self.not_recipes,
+        )
         for lines in lists:
             lines.sort()
 
@@ -126,6 +147,7 @@ class Pipeline:
         synonyms = yaml.safe_load(units.read_text(encoding="utf-8")) if units.is_file() else {}
         self.units = UnitNormalizer(synonyms or {})
         self.foods = FoodMatcher()
+        self.rules = ClassifyRules.load(workspace / "config" / "classify_rules.yaml")
         selectors = workspace / "config" / "site_selectors.yaml"
         self.selectors: dict[str, dict[str, str]] = (
             yaml.safe_load(selectors.read_text(encoding="utf-8")) if selectors.is_file() else {}
@@ -211,6 +233,12 @@ class Pipeline:
             if stage in ("linkcheck", "upload"):
                 self._links = None  # one fresh listing of Mealie per batch
             batch = self.store.next_batch(kind, stage, previous)
+            if stage not in ("metadata", "classify"):  # only Videos `classify` let through
+                batch = [
+                    key
+                    for key in batch
+                    if self._let_through(key if kind == "video" else self.store.part(key).video_key)
+                ]
             if stage == "scrape":  # only Videos that still have a Part to import (not already in Mealie)
                 wanted_videos = {
                     p.video_key
@@ -225,6 +253,10 @@ class Pipeline:
                     if self.store.stage_status("video", self.store.part(key).video_key, "scrape") == "done"
                 ]
             todo = batch[:limit] if limit is not None else batch
+            if stage == "classify":  # batched: many Videos per LLM call
+                if not self._classify(todo, report, should_stop):
+                    return report
+                continue
             if workers > 1 and stage in PARALLEL_STAGES and len(todo) > 1:
                 stop = self._run_parallel(
                     kind, stage, todo, handlers[stage], report, dry_run, workers, should_stop
@@ -347,7 +379,94 @@ class Pipeline:
             return
         meta = self.a.videos.metadata(video.canonical_url)
         self.store.set_metadata(video_key, meta.model_dump())
-        self.store.ensure_part(video_key, 1, 1)
+
+    def _let_through(self, video_key: str) -> bool:
+        """A Recipe Request always; a Video once `classify` labelled it a recipe."""
+        if self.store.video(video_key).platform == "web":
+            return True
+        return self.store.stage_status("video", video_key, "classify") == "done"
+
+    def _classify(self, keys: list[str], report: RunReport, should_stop: Callable[[], bool]) -> bool:
+        """Labels the Videos in batches; False when the run must stop. Recipe Requests are no Videos
+        to classify. Overrides from `reports/classification.csv` win, also over earlier verdicts."""
+        csv_path = self.workspace / "reports" / "classification.csv"
+        overrides, warnings = read_overrides(csv_path)
+        report.warnings += warnings
+        try:
+            for video in self.store.videos():  # an Override set or changed since the last run
+                label = overrides.get(video.video_key)
+                status = self.store.stage_status("video", video.video_key, "classify")
+                if (
+                    label
+                    and status in ("done", "skipped")
+                    and (video.classification or {}).get("label") != label
+                ):
+                    self._decide(video.video_key, by_hand(label), report)
+            self._links = None  # one fresh listing of Mealie per batch
+            ask: list[str] = []
+            for key in keys:
+                if self.store.video(key).platform == "web":
+                    continue
+                if key in overrides:
+                    self._decide(key, by_hand(overrides[key]), report)
+                elif self._already_in_mealie(key):  # no LLM call; `linkcheck` then records it
+                    reason = "its link is already a recipe in Mealie"
+                    self._decide(key, Verdict("recipe", 1.0, [reason], source="existing"), report)
+                else:
+                    ask.append(key)
+            return self._classify_with_llm(ask, report, should_stop)
+        finally:
+            write_classification_csv(self.store, csv_path, self.rules)
+
+    def _classify_with_llm(self, keys: list[str], report: RunReport, should_stop: Callable[[], bool]) -> bool:
+        classifier = Classifier(self.a.llm, self.settings.classify, self.a.videos.subtitles)
+        size = self.settings.classify.batch_size
+        for start in range(0, len(keys), size):
+            if should_stop():
+                report.stopped = "Interrupted: finished the current item and stopped. Run again to continue."
+                return False
+            chunk = keys[start : start + size]
+            inputs = []
+            for key in chunk:
+                self.store.record("video", key, "classify", "running")
+                video = self.store.video(key)
+                meta = video_meta(video)
+                inputs.append(ClassifyInput(key, video.canonical_url, meta, signals(meta, self.rules)))
+            try:
+                verdicts = classifier.classify(inputs)
+            except UsageLimited as err:
+                for key in chunk:
+                    self.store.record("video", key, "classify", "pending", str(err))
+                report.stopped = f"Claude usage limit reached: {err}. Run again after it resets."
+                return False
+            except LLMError as err:  # the batch fails; `mp retry` or the next run asks again
+                for key in chunk:
+                    self.store.record("video", key, "classify", "failed", describe_error(err))
+                    report.failed.append(f"{key} [classify]: {describe_error(err)}")
+                continue
+            for key in chunk:
+                self._decide(key, verdicts[key], report)
+        return True
+
+    def _already_in_mealie(self, video_key: str) -> bool:
+        try:
+            return self._link_key(video_key) in self._link_set()
+        except MealieError:
+            return False  # Mealie is not reachable: classify as usual
+
+    def _decide(self, video_key: str, verdict: Verdict, report: RunReport) -> None:
+        """Stores the Video Label; a recipe gets its Recipe Part and goes on, anything else is skipped."""
+        self.store.set_classification(video_key, verdict.as_dict())
+        detail = f"{verdict.label} ({verdict.confidence:.2f})"
+        if verdict.reasons:
+            detail += f": {verdict.reasons[0]}"
+        if verdict.passes:
+            self.store.ensure_part(video_key, 1, 1)
+            self.store.record("video", video_key, "classify", "done", detail)
+            report.count("classify")
+        else:
+            self.store.record("video", video_key, "classify", "skipped", detail)
+            report.not_recipes.append(f"{video_key}: {detail}")
 
     def _web_path(self, video_key: str) -> Path:
         video = self.store.video(video_key)
@@ -851,6 +970,10 @@ class Pipeline:
             if new_file:
                 writer.writerow(["name", "first_video_key", "created_at"])
             writer.writerow([name, video_key, self.now().isoformat(timespec="seconds")])
+
+
+def by_hand(label: str) -> Verdict:
+    return Verdict(label, 1.0, ["set by hand in classification.csv"], source="override")
 
 
 def describe_error(err: Exception) -> str:

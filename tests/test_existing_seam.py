@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from tests.helpers import non_classify_calls
 from tests.test_pipeline_seam import (
     ITEM_KEY,
     URL,
@@ -67,7 +68,7 @@ def test_a_video_already_in_mealie_costs_no_llm_call_and_no_mealie_write(world: 
     result = world.invoke("run")
 
     assert result.exit_code == 0, result.output
-    assert world.llm.calls == []  # zero LLM calls
+    assert non_classify_calls(world.llm) == []  # zero LLM calls
     assert snapshot(world) == before  # the old recipe is untouched and nothing new exists
     assert (len(world.mealie.foods), len(world.mealie.tags), len(world.mealie.units)) == (foods, tags, units)
     assert world.images.requests == []
@@ -87,7 +88,7 @@ def test_a_rerun_after_the_skip_does_nothing_more(world: World):
 
     again = world.invoke("run")
 
-    assert again.exit_code == 0 and world.llm.calls == []
+    assert again.exit_code == 0 and non_classify_calls(world.llm) == []
     assert "already_in_mealie" not in again.output  # nothing left to process
 
 
@@ -108,15 +109,15 @@ def test_a_recipe_with_the_same_name_but_no_link_is_not_matched(world: World):
     result = world.invoke("run")
 
     assert result.exit_code == 0, result.output
-    assert len(world.llm.calls) == 1
+    assert len(non_classify_calls(world.llm)) == 1
     assert len(world.mealie.recipes) == 2
 
 
 def test_the_link_is_checked_again_right_before_upload(world: World):
     world.invoke("add", URL)
-    first = world.invoke("run", "--stages", "metadata,linkcheck,scrape,extract,parse,tag,verify")
+    first = world.invoke("run", "--stages", "metadata,classify,linkcheck,scrape,extract,parse,tag,verify")
     assert first.exit_code == 0, first.output
-    assert len(world.llm.calls) == 1 and world.mealie.recipes == {}
+    assert len(non_classify_calls(world.llm)) == 1 and world.mealie.recipes == {}
     slug = old_import(world)  # it appears in Mealie after extraction, before upload
     before = snapshot(world)
 
@@ -131,7 +132,7 @@ def test_the_link_is_checked_again_right_before_upload(world: World):
 
 def test_the_pre_upload_check_lists_mealie_once_per_batch(world: World):
     world.invoke("add", URL)
-    world.invoke("run", "--stages", "metadata,linkcheck,scrape,extract,parse,tag,verify")
+    world.invoke("run", "--stages", "metadata,classify,linkcheck,scrape,extract,parse,tag,verify")
     calls = []
     original = world.mealie.list_recipe_summaries
     world.mealie.list_recipe_summaries = lambda: (calls.append(1), original())[1]  # type: ignore[method-assign]
@@ -202,9 +203,9 @@ def test_an_upgraded_recipe_is_not_upgraded_again_on_the_next_run(world: World):
     world.invoke("add", URL)
     world.invoke("run", "--upgrade-existing")
     after = snapshot(world)
-    calls = len(world.llm.calls)
+    calls = len(non_classify_calls(world.llm))
 
     again = world.invoke("run", "--upgrade-existing")
 
-    assert again.exit_code == 0 and snapshot(world) == after and len(world.llm.calls) == calls
+    assert again.exit_code == 0 and snapshot(world) == after and len(non_classify_calls(world.llm)) == calls
     assert world.store().part(ITEM_KEY).slug == slug

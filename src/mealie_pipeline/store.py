@@ -123,6 +123,8 @@ MIGRATIONS = [
     ALTER TABLE videos ADD COLUMN early_json TEXT;
     INSERT OR IGNORE INTO video_urls (video_key, url) SELECT video_key, url FROM videos;
     """,
+    # Migration 7 (ticket 05): the Video Label and how it was reached (`classify` stage).
+    "ALTER TABLE videos ADD COLUMN classification_json TEXT;",
 ]
 
 PART_JSON_FIELDS = {"extracted", "parsed", "tags", "verify"}
@@ -138,6 +140,7 @@ class Video:
     canonical_url: str
     metadata: dict[str, Any] | None
     early: dict[str, Any] | None = None  # title/channel/duration from a list listing, before `metadata`
+    classification: dict[str, Any] | None = None  # the Video Label, confidence and reasons (`classify`)
 
 
 @dataclass(frozen=True)
@@ -267,6 +270,13 @@ class StateStore:
         )
         self._db.commit()
 
+    def set_classification(self, video_key: str, classification: dict[str, Any]) -> None:
+        self._db.execute(
+            "UPDATE videos SET classification_json = ? WHERE video_key = ?",
+            (json.dumps(classification), video_key),
+        )
+        self._db.commit()
+
     def video(self, video_key: str) -> Video:
         row = self._db.execute("SELECT * FROM videos WHERE video_key = ?", (video_key,)).fetchone()
         if row is None:
@@ -279,6 +289,7 @@ class StateStore:
             row["canonical_url"],
             _loads(row["metadata_json"]),
             _loads(row["early_json"]),
+            _loads(row["classification_json"]),
         )
 
     def videos(self) -> list[Video]:
