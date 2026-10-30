@@ -377,6 +377,12 @@ class StateStore:
         ).fetchall()
         return [r["video_key"] for r in rows]
 
+    def list_video_keys(self, list_key: str) -> set[str]:
+        rows = self._db.execute(
+            "SELECT video_key FROM list_members WHERE list_key = ?", (list_key,)
+        ).fetchall()
+        return {r["video_key"] for r in rows}
+
     def memberships(self, video_key: str) -> list[str]:
         rows = self._db.execute(
             "SELECT list_key FROM list_members WHERE video_key = ? ORDER BY list_key", (video_key,)

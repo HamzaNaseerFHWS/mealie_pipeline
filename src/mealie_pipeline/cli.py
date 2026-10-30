@@ -264,6 +264,10 @@ def run(
             help="Items handled at the same time by find, scrape and extract (default: run.workers).",
         ),
     ] = None,
+    only_list: Annotated[
+        str | None,
+        typer.Option("--list", help="Only the Videos of this Saved List (URL or key, see `mp lists`)."),
+    ] = None,
 ) -> None:
     """Take every registered Video through metadata, classify, extract, parse, tag and upload."""
     app_ctx: AppContext = ctx.obj
@@ -281,6 +285,14 @@ def run(
         typer.echo("--mode must be skip or update")
         raise typer.Exit(2)
     pipeline = _open_pipeline(app_ctx)
+    only_videos: set[str] | None = None
+    if only_list is not None:
+        normalized = normalize_list(only_list)
+        list_key = normalized.list_key if normalized else only_list
+        if not any(s.list_key == list_key for s in pipeline.store.saved_lists()):
+            typer.echo(f"{only_list} is not a registered Saved List (see `mp lists`)")
+            raise typer.Exit(2)
+        only_videos = pipeline.store.list_video_keys(list_key)
     interrupted = False
 
     def on_interrupt(signum, frame):  # noqa: ARG001
@@ -304,6 +316,7 @@ def run(
                 upgrade_existing=upgrade_existing,
                 should_stop=lambda: interrupted,
                 workers=worker_count,
+                only_videos=only_videos,
             )
         else:  # only `find` was asked for
             report = RunReport()

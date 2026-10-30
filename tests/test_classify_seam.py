@@ -280,6 +280,25 @@ def test_recipe_requests_do_not_use_up_the_limit_meant_for_videos(world: World):
     assert rows(world)[0]["label"] == "recipe"
 
 
+def test_run_can_be_limited_to_one_saved_list(world: World):
+    world.invoke("add", URL)  # a Video that is in no list
+    other = "https://www.youtube.com/watch?v=" + OTHER_ID
+    world.videos.infos[other] = load("youtube_info_okra.json")
+    world.invoke("add", other)
+    store = world.store()
+    store.add_list("youtube:PLmine", "youtube", "https://www.youtube.com/playlist?list=PLmine")
+    store.record_sync("youtube:PLmine", [OTHER_KEY])
+
+    result = world.invoke(
+        "run", "--stages", "metadata,classify", "--list", "https://www.youtube.com/playlist?list=PLmine"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert [r["video_key"] for r in rows(world) if r["label"]] == [OTHER_KEY]
+    assert world.store().stage_status("video", VIDEO_KEY, "metadata") is None
+    assert world.invoke("run", "--list", "youtube:PLnope").exit_code == 2
+
+
 def test_recipe_requests_are_not_classified_and_pass_straight_through(world: World):
     world.invoke("add", URL)
     store = world.store()

@@ -171,6 +171,7 @@ class Pipeline:
         upgrade_existing: bool = False,
         should_stop: Callable[[], bool] = lambda: False,
         workers: int = 1,
+        only_videos: set[str] | None = None,
     ) -> RunReport:
         """Runs the stages over every Video and every found Recipe Request that is ready (see `_run`).
 
@@ -187,6 +188,7 @@ class Pipeline:
                 upgrade_existing=upgrade_existing,
                 should_stop=should_stop,
                 workers=workers,
+                only_videos=only_videos,
             )
         finally:
             sync_outcomes(self.store, requests)
@@ -201,8 +203,9 @@ class Pipeline:
         upgrade_existing: bool = False,
         should_stop: Callable[[], bool] = lambda: False,
         workers: int = 1,
+        only_videos: set[str] | None = None,
     ) -> RunReport:
-        """Runs the stages in order over every entity that is ready.
+        """Runs the stages in order over every entity that is ready (only those of `only_videos`, if given).
 
         `should_stop` is polled between entities (Ctrl+C sets it): the entity in progress finishes,
         then the run returns. Whatever was not reached stays pending for the next run.
@@ -234,6 +237,12 @@ class Pipeline:
             if stage in ("linkcheck", "upload"):
                 self._links = None  # one fresh listing of Mealie per batch
             batch = self.store.next_batch(kind, stage, previous)
+            if only_videos is not None:
+                batch = [
+                    key
+                    for key in batch
+                    if (key if kind == "video" else self.store.part(key).video_key) in only_videos
+                ]
             if stage not in ("metadata", "classify"):  # only Videos `classify` let through
                 batch = [
                     key
