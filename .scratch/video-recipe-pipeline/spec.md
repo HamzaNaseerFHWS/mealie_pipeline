@@ -179,7 +179,7 @@ A command-line pipeline (`mp`) that runs on the user's Windows laptop. The user 
 
 ### CLI surface
 
-`mp doctor`, `mp login <platform>`, `mp lists add <url>` / `mp lists` / `mp sync [--list]`, `mp add <url…> | --file <path>`, `mp run [--stages a,b] [--limit N] [--window HH:MM-HH:MM] [--dry-run] [--mode skip|update] [--allow-openai]`, `mp status`, `mp review classify`, `mp retry <item_key|video_key> [--stage]`, `mp reset <stage> [--failed-only]`, `mp report`, `mp bench-whisper [--samples dir]`, `mp auto [--dry-run] [--force-sync]` (one Auto Sync Cycle; `--force-sync` ignores `check_every`), `mp schedule install|remove|status`, `mp requests add --file <csv|xlsx> [--sheet name]` / `mp requests` / `mp requests retry <row|name>` / `mp requests reset --failed-only`.
+`mp doctor`, `mp login <platform>`, `mp lists add <url>` / `mp lists` / `mp sync [--list]`, `mp add <url…> | --file <path>`, `mp run [--stages a,b] [--limit N] [--window HH:MM-HH:MM] [--dry-run] [--mode skip|update] [--allow-openai]`, `mp status`, `mp review classify`, `mp retry <item_key|video_key> [--stage]`, `mp reset <stage> [--failed-only]`, `mp report`, `mp bench-whisper [--samples dir]`, `mp auto [--dry-run] [--force-sync]` (one Auto Sync Cycle; `--force-sync` ignores `check_every`), `mp schedule install|remove|status`, `mp requests add --file <csv|xlsx> [--sheet name]` / `mp requests` / `mp requests retry <row|name>` / `mp requests reset --failed-only`, `mp tags protein [--apply] [--llm-check]` (Protein Tags backfill over every Mealie recipe; a dry run writing `reports/protein_tags.csv` unless `--apply`).
 
 ### Data shapes (decisions)
 

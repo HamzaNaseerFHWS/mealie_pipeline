@@ -1,0 +1,89 @@
+# Protein Tags (ticket 25): the approved list of main-protein tags and the words that mean each one.
+# Final tag names are confirmed in wayfinder 20 (tag taxonomy). `mp tags protein --apply` may create
+# these tags in Mealie (and only these); the tag stage adds them to new recipes when they exist.
+#
+# Matching is on whole words, ignoring case, with simple plurals ("egg" also matches "eggs",
+# "lentil" "lentils"). A word ending in `*` matches any word starting with it, for German compounds
+# ("hähnchen*" matches "Hähnchenbrustfilet"). Multi-word phrases match those words in a row, and
+# the longest phrase wins: "chana dal" is Lentils, not Chickpeas.
+
+tags:
+  Chicken: [chicken, chicken sausage, murgh, murg, hähnchen*, hühnchen*, huhn, hühner*, poulet]
+  Beef: [beef, steak, ground beef, beef sausage, beef bacon, rinder*, rindfleisch, rindsbraten, rindsgulasch, gai ka gosht, bara gosht, bade ka gosht]
+  Lamb & Mutton: [lamb, mutton, goat, bakra, bakre, gosht, lamm*, hammel*, ziege]
+  Fish: [fish, salmon, tuna, cod, tilapia, trout, sardine, mackerel, haddock, sea bass, seabass, basa, pomfret, surmai, rohu, machli, machhli, mahi, fisch*, lachs*, thunfisch*, kabeljau, forelle]
+  Seafood: [shrimp, prawn, jhinga, jheenga, crab, squid, calamari, mussel, clam, scallop, lobster, octopus, garnele*, krabbe*, muschel*, tintenfisch*]
+  Turkey: [turkey, turkey bacon, turkey sausage, pute*, truthahn]
+  Pork: [pork, bacon, ham, prosciutto, pancetta, chorizo, sausage, salami, schwein*, schinken, speck, würstchen, wurst, bratwurst]
+  Egg: [egg, anda, anday, ande, ei, eier]
+  Tofu: [tofu, tempeh, seitan]
+  Paneer: [paneer]
+  Cheese: [cheese, goat cheese, cream cheese, halloumi, mozzarella, cheddar, feta, käse*]
+  Lentils: [lentil, dal, daal, dhal, masoor, moong, mung, mung bean, urad, chana dal, toor, arhar, linse, linsen*]
+  Beans: [bean, rajma, lobia, kidney bean, black bean, white bean, baked bean, cannellini, pinto, bohne, bohnen*]
+  Chickpeas: [chickpea, chana, chole, cholay, garbanzo, hummus, kabuli chana, kichererbse*]
+  Soy chunks: [soya chunk, soy chunk, tvp, nutrela, soya bari]
+
+# Flavourings and other things that name a protein without being one. They are checked before the
+# tags, so "chicken stock" never counts as Chicken.
+exclude:
+  - chicken stock
+  - chicken broth
+  - chicken bouillon
+  - chicken powder
+  - chicken cube
+  - chicken stock cube
+  - chicken seasoning
+  - chicken masala powder
+  - hühnerbrühe
+  - hühnerfond
+  - hühnerbouillon
+  - beef stock
+  - beef broth
+  - beef bouillon
+  - rinderbrühe
+  - rinderfond
+  - bone broth
+  - fish sauce
+  - fish stock
+  - fischsauce
+  - fischfond
+  - shrimp paste
+  - oyster sauce
+  - egg noodle
+  - egg wash
+  - green bean
+  - french bean
+  - string bean
+  - runner bean
+  - grüne bohne
+  - grüne bohnen
+  - bohnenkraut
+  - vanilla bean
+  - coffee bean
+  - cocoa bean
+  - jelly bean
+  - parmesan cheese
+  - käsekuchen
+  - besan
+  - eis
+  - soy sauce
+  - soya sauce
+
+# An ingredient line with one of these is not a main protein (unless the recipe name names it).
+not_main:
+  - optional
+  - garnish
+  - to serve
+  - for serving
+  - serve with
+  - zum garnieren
+  - zum servieren
+  - nach wahl
+
+# Desserts, baked goods and drinks: eggs, cheese and paneer in them are not the main protein,
+# unless the recipe name names them. A recipe is one of these by an existing tag or by its name.
+sweet:
+  tags: [dessert, desserts, cake, cakes, baking, baked goods, sweets, sweet, cookies, drink, drinks, beverage, beverages, breakfast pastry]
+  words: [cake, cupcake, cheesecake, cookie, brownie, muffin, pudding, kheer, halwa, kuchen*, torte, tart, dessert, ice cream, pancake, waffle, crepe, bread, loaf, biscuit, donut, doughnut, mithai, barfi, ladoo, laddu, custard, mousse, tiramisu, plätzchen, keks*, gebäck, lassi, smoothie, shake, milkshake, chai, tea, coffee, juice, lemonade]
+  skip: [Egg, Cheese, Paneer]

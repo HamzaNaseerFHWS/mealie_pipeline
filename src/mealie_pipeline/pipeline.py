@@ -30,6 +30,7 @@ from mealie_pipeline.images import attach_image, candidate_urls
 from mealie_pipeline.matching import FoodMatcher, UnitNormalizer
 from mealie_pipeline.models import ExtractedRecipe, Judge, ParsedIngredient, VideoMeta, extraction_schema
 from mealie_pipeline.payload import build_payload
+from mealie_pipeline.protein import ProteinRules, RecipeText, detect, tag_key
 from mealie_pipeline.recipe_extraction import extract_recipes
 from mealie_pipeline.recipe_extraction import format_for_prompt as web_text
 from mealie_pipeline.recipe_requests import RecipeRequest, RecipeRequests
@@ -129,6 +130,8 @@ class Pipeline:
         self.selectors: dict[str, dict[str, str]] = (
             yaml.safe_load(selectors.read_text(encoding="utf-8")) if selectors.is_file() else {}
         ) or {}
+        proteins = workspace / "config" / "protein_tags.yaml"
+        self.proteins = ProteinRules.load(proteins) if proteins.is_file() else None
 
     # -- public ---------------------------------------------------------------------------
 
@@ -722,15 +725,26 @@ class Pipeline:
         return payload
 
     def _choose_tags(self, recipe: ExtractedRecipe) -> list[dict[str, Any]]:
-        by_name = {t.name.casefold(): t for t in self.catalog.tags}
+        by_name = {tag_key(t.name): t for t in self.catalog.tags}
         chosen: list[Tag] = []
         for choice in recipe.tag_choices:
-            tag = by_name.get(choice.tag.casefold())
+            tag = by_name.get(tag_key(choice.tag))
             if tag is not None and tag not in chosen:
                 chosen.append(tag)
+        # Protein Tags are Rule Tags: always kept, but only those that already exist in Mealie
+        # (`mp tags protein --apply` is what creates them).
+        proteins = [by_name[tag_key(name)] for name in self._protein_tags(recipe) if tag_key(name) in by_name]
+        chosen = [t for t in chosen if t not in proteins][: MAX_TAGS - len(proteins)] + proteins
         if not chosen:
             raise StageFailure("no existing Mealie tag was chosen for this recipe")
         return [{"id": t.id, "name": t.name, "slug": t.slug} for t in chosen[:MAX_TAGS]]
+
+    def _protein_tags(self, recipe: ExtractedRecipe) -> list[str]:
+        if self.proteins is None:
+            return []
+        lines = [f"{i.line} | {i.original_line} | {i.food_original}" for i in recipe.ingredients]
+        text = RecipeText(recipe.name, lines, [c.tag for c in recipe.tag_choices])
+        return list(detect(text, self.proteins))
 
     def _parse_ingredients(
         self, recipe: ExtractedRecipe, video_key: str, *, create: bool
