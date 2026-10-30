@@ -266,4 +266,4 @@ def test_a_newly_uploaded_chicken_recipe_carries_the_chicken_tag(world: ProteinW
 
     assert result.exit_code == 0, result.output
     (uploaded,) = world.mealie.recipes.values()
-    assert [t["name"] for t in uploaded["tags"]] == ["Dinner", "Chicken"]
+    assert [t["name"] for t in uploaded["tags"]] == ["Chicken", "Dinner"]  # Rule Tags rank first

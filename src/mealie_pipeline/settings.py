@@ -8,7 +8,7 @@ or the environment. Nested yaml keys are overridden with a double underscore, su
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from dotenv import dotenv_values
@@ -185,6 +185,12 @@ class ClassifySettings(BaseModel):
     subtitle_chars: int = 4000  # of the subtitles sent when a Video is escalated
 
 
+class OutlineSettings(BaseModel):
+    """The `outline` stage: Videos that hold several recipes (ticket 12)."""
+
+    overlap: Literal["repair", "reject"] = "repair"  # what to do with overlapping part timestamps
+
+
 class VerifySettings(BaseModel):
     """The Gate: thresholds and weights for the Quality Score (0-100)."""
 
@@ -219,6 +225,7 @@ class Settings(BaseModel):
     find: FindSettings = Field(default_factory=FindSettings)
     parse: ParseSettings = Field(default_factory=ParseSettings)
     classify: ClassifySettings = Field(default_factory=ClassifySettings)
+    outline: OutlineSettings = Field(default_factory=OutlineSettings)
     mealie_url: str | None = None
     mealie_token: SecretStr | None = None
     openai_api_key: SecretStr | None = None
@@ -231,7 +238,7 @@ class Settings(BaseModel):
 
 
 SECRET_FIELDS = {"mealie_url", "mealie_token", "openai_api_key", "openai_max_usd"}
-NESTED_SECTIONS = {"mealie", "run", "llm", "images", "verify", "web", "find", "parse", "classify"}
+NESTED_SECTIONS = {"mealie", "run", "llm", "images", "verify", "web", "find", "parse", "classify", "outline"}
 
 
 def _apply_overrides(data: dict[str, Any], overrides: Mapping[str, str | None]) -> None:

@@ -138,3 +138,16 @@ def test_missing_mealie_settings_fail_with_an_env_hint(tmp_path, mealie, system)
     assert result.exit_code == 1
     assert "MEALIE_URL" in result.output
     assert ".env" in result.output
+
+
+def test_doctor_lists_tag_rules_whose_tag_is_missing_from_mealie(workspace, mealie, system):
+    (workspace / "config").mkdir()
+    (workspace / "config" / "tag_rules.yaml").write_text(
+        "rules:\n  - {tag: Quick, when: {max_total_minutes: 30}}\n  - {tag: Ghost, when: {drink: true}}\n",
+        encoding="utf-8",
+    )
+
+    result = doctor(workspace, mealie, system)
+
+    assert "[WARN] Tag rules: 1 rule names a tag missing from Mealie: Ghost" in result.output
+    assert result.exit_code == 0

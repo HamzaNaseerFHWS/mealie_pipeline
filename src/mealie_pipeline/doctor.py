@@ -16,6 +16,7 @@ from mealie_pipeline.sessions import (
     session_statuses,
 )
 from mealie_pipeline.settings import Settings
+from mealie_pipeline.tagging import TagRules, match_existing
 
 Status = Literal["ok", "fail", "warn", "skip"]
 MIN_PYTHON = (3, 12)
@@ -43,7 +44,7 @@ def run_doctor(
     ]
     if workspace is not None:
         checks += _sessions(workspace, now or datetime.now(UTC))
-    checks += _mealie(adapters, settings)
+    checks += _mealie(adapters, settings, workspace)
     return checks
 
 
@@ -129,7 +130,7 @@ def _session(status: SessionStatus, logins: dict[str, str]) -> Check:
     return Check("ok", name, detail)
 
 
-def _mealie(adapters: Adapters, settings: Settings) -> list[Check]:
+def _mealie(adapters: Adapters, settings: Settings, workspace: Path | None = None) -> list[Check]:
     mealie = adapters.mealie
     if not settings.mealie_url or not settings.mealie_token:
         missing = [
@@ -187,7 +188,20 @@ def _mealie(adapters: Adapters, settings: Settings) -> list[Check]:
     except MealieError as err:
         return checks + [Check("fail", "Mealie catalog", str(err), "check the token's permissions")]
     counts = f"{len(catalog.tags)} tags, {len(catalog.foods)} foods, {len(catalog.units)} units"
-    return checks + [Check("ok", "Mealie catalog", counts)]
+    checks.append(Check("ok", "Mealie catalog", counts))
+    return checks + _tag_rules(workspace, [t.name for t in catalog.tags])
+
+
+def _tag_rules(workspace: Path | None, existing: list[str]) -> list[Check]:
+    """Tag rules that name a tag Mealie does not have (such a rule never applies)."""
+    path = workspace / "config" / "tag_rules.yaml" if workspace is not None else None
+    if path is None or not path.is_file():
+        return []
+    missing = sorted({t for t in TagRules.load(path).tag_names() if match_existing(t, existing) is None})
+    if not missing:
+        return [Check("ok", "Tag rules", "every rule names an existing tag")]
+    noun = "rule names a tag" if len(missing) == 1 else "rules name tags"
+    return [Check("warn", "Tag rules", f"{len(missing)} {noun} missing from Mealie: {', '.join(missing)}")]
 
 
 def render(checks: list[Check]) -> str:

@@ -340,6 +340,8 @@ def run(
         typer.echo(f"already_in_mealie {line}")
     for line in report.upgraded_existing:
         typer.echo(f"upgraded_existing {line}")
+    for line in report.duplicates:
+        typer.echo(f"duplicate {line}")
     if report.already_in_mealie or report.upgraded_existing:
         typer.echo(
             f"{len(report.already_in_mealie)} already in Mealie (skipped), "
@@ -428,6 +430,10 @@ def status(ctx: typer.Context) -> None:
     console = Console(width=120)
     console.print(table)
     console.print(f"Videos: {len(store.videos())}   Recipe Parts: {len(store.parts())}")
+    for video in store.videos():
+        parts = store.video_parts(video.video_key)
+        if len(parts) > 1:
+            console.print(f"  {video.video_key}: {sum(1 for p in parts if p.slug)}/{len(parts)} uploaded")
     retried = sum(1 for p in store.parts() if (p.verify or {}).get("extraction_attempts", 1) > 1)
     held = sum(1 for p in store.parts() if (p.verify or {}).get("outcome") == "review")
     console.print(f"Gate: {held} in the Review Queue, {retried} extracted a second time after a failed check")

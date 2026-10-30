@@ -1,0 +1,35 @@
+# Rule Tags (ticket 10): tags derived from the parsed data, not from the LLM's judgement.
+# The real mapping is confirmed with the user in wayfinder 19/20; until then the examples below are
+# commented out and use placeholder tag names. A rule only ever names a tag that already exists in
+# Mealie: a rule naming a missing tag never applies, and `mp doctor` lists it. Tag names are matched
+# ignoring case, spaces and punctuation. Protein Tags live in `protein_tags.yaml`, not here.
+#
+# Conditions in `when` must all hold:
+#   no_foods_in: [group, ...]    none of the recipe's parsed Foods is in these food groups
+#   any_foods_in: [group, ...]   at least one is
+#   max_total_minutes: 30        total time known and at most this
+#   language: [de, en]           the Recipe Language is one of these (en, de, ur, hi)
+#   drink: true                  the recipe name contains a drink word
+
+# Words (whole words, simple plurals; `x*` matches any word starting with x) per food group.
+food_groups:
+  meat: [chicken, beef, lamb, mutton, pork, bacon, ham, sausage, turkey, hähnchen*, rind*, schwein*, gosht]
+  fish: [fish, salmon, tuna, cod, shrimp, prawn, crab, squid, fisch*, lachs*]
+  egg: [egg, eier]
+  dairy: [milk, butter, cream, cheese, yogurt, yoghurt, paneer, ghee, käse*, sahne]
+
+# A recipe whose name contains one of these is a drink.
+drink_words: [smoothie, lassi, juice, shake, cocktail, tea, chai, coffee, lemonade, saft]
+
+# Uncomment and rename the tags to ones that exist in Mealie.
+rules: []
+#  - {tag: Vegetarian, when: {no_foods_in: [meat, fish]}}
+#  - {tag: Vegan, when: {no_foods_in: [meat, fish, egg, dairy]}}
+#  - {tag: Quick, when: {max_total_minutes: 30}}
+#  - {tag: Drinks, when: {drink: true}}
+
+# A tag the LLM chose is removed (and flagged in the run report) when one of the recipe's Foods
+# rules it out.
+contradictions: []
+#  - {tag: Vegetarian, foods_in: [meat, fish]}
+#  - {tag: Vegan, foods_in: [meat, fish, egg, dairy]}

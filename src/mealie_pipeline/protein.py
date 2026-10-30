@@ -168,3 +168,8 @@ def mealie_recipe_text(recipe: dict[str, Any]) -> RecipeText:
 def is_unparsed(recipe: dict[str, Any]) -> bool:
     """No ingredient is linked to a Food (an older import whose lines are plain text)."""
     return not any((i.get("food") or {}).get("id") for i in recipe.get("recipeIngredient") or [])
+
+
+def contains_any(text: str, phrases: list[str]) -> bool:
+    """Whether `text` holds any of the phrases (whole words, simple plurals, `*` prefixes)."""
+    return _has_any(text, phrases)

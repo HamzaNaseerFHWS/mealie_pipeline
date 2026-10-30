@@ -75,6 +75,7 @@ def test_videos_added_before_saved_lists_existed_keep_their_url(tmp_path):
         "DROP TABLE list_members; DROP TABLE video_urls; DROP TABLE saved_lists; DROP TABLE creator_websites;"
         " ALTER TABLE videos DROP COLUMN early_json;"
         " ALTER TABLE videos DROP COLUMN classification_json;"  # migration 7 came later still
+        " ALTER TABLE recipe_parts DROP COLUMN outline_json;"  # and migration 9
         " INSERT INTO videos (video_key, platform, video_id, url, canonical_url, added_at)"
         " VALUES ('youtube:a', 'youtube', 'a', 'https://youtu.be/a', 'c', '2026-01-01');"
     )
