@@ -332,7 +332,8 @@ def test_report_has_one_row_per_recipe_part_and_one_per_video_without_parts(thre
         "parse_status",
         "tag_status", "verify_status", "upload_status", "score", "outcome", "failed_checks",
         "extraction_attempts", "failure_reason", "mealie_slug", "mealie_url", "created_foods",
-        "tags", "warnings",
+        "tags", "warnings", "lines_agreed", "lines_nlp_preferred", "lines_conflict", "lines_unparsed",
+        "suspicious_lines",
     ]  # fmt: skip
     by_video = {r["video_url"]: r for r in rows}
     assert len(rows) == 3

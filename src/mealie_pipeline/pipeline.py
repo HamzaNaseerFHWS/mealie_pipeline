@@ -30,10 +30,10 @@ from mealie_pipeline.images import attach_image, candidate_urls
 from mealie_pipeline.matching import FoodMatcher, UnitNormalizer
 from mealie_pipeline.models import ExtractedRecipe, Judge, ParsedIngredient, VideoMeta, extraction_schema
 from mealie_pipeline.payload import build_payload
-from mealie_pipeline.reconcile import reconcile
 from mealie_pipeline.recipe_extraction import extract_recipes
 from mealie_pipeline.recipe_extraction import format_for_prompt as web_text
 from mealie_pipeline.recipe_requests import RecipeRequest, RecipeRequests
+from mealie_pipeline.reconcile import reconcile
 from mealie_pipeline.request_import import register_found, sync_outcomes
 from mealie_pipeline.review import write_review_file
 from mealie_pipeline.sanity import check_line

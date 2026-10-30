@@ -8,6 +8,10 @@ from mealie_pipeline.store import StateStore
 
 STATUSES = ["pending", "running", "done", "failed", "skipped", "review"]
 
+# Lines per parse status (ticket 09); `nlp_only` lines (no LLM parse to compare) are not counted.
+PARSE_STATUSES = ["agreed", "nlp_preferred", "conflict", "unparsed"]
+PARSE_COLUMNS = [f"lines_{status}" for status in PARSE_STATUSES]
+
 REPORT_COLUMNS = [
     "item_key",
     "video_url",
@@ -23,6 +27,8 @@ REPORT_COLUMNS = [
     "created_foods",
     "tags",
     "warnings",
+    *PARSE_COLUMNS,
+    "suspicious_lines",
 ]
 
 
@@ -44,7 +50,8 @@ def write_report(store: StateStore, workspace: Path) -> Path:
     Columns: item_key, video_url, platform, `<stage>_status` for every stage (empty = not reached),
     score / outcome / failed_checks / extraction_attempts (the Gate), failure_reason (the last error
     of the first failed or held-back stage), mealie_slug, mealie_url, created_foods
-    (Foods first created for this Video), tags (`;`-separated) and warnings (such as image_missing).
+    (Foods first created for this Video), tags (`;`-separated), warnings (such as image_missing),
+    `lines_<status>` (Ingredient Lines per parse status) and suspicious_lines (lines a Sanity Check flagged).
     """
     records = {(r.entity_kind, r.entity_key, r.stage): r for r in store.stage_records()}
     foods = created_food_counts(workspace)
@@ -61,6 +68,11 @@ def write_report(store: StateStore, workspace: Path) -> Path:
                 statuses[f"{stage}_status"] = record.status if record else ""
                 if record and record.status in ("failed", "review") and not reason:
                     reason = f"{stage}: {record.last_error or ''}"
+            parsed = (part.parsed if part else None) or []
+            parse_counts = {
+                f"lines_{status}": sum(p.get("parse_status") == status for p in parsed) if part else ""
+                for status in PARSE_STATUSES
+            }
             rows.append(
                 {
                     "item_key": item_key,
@@ -77,6 +89,8 @@ def write_report(store: StateStore, workspace: Path) -> Path:
                     "created_foods": foods.get(video.video_key, 0),
                     "tags": ";".join(t["name"] for t in (part.tags or [])) if part else "",
                     "warnings": ";".join(part.warnings) if part else "",
+                    **parse_counts,
+                    "suspicious_lines": sum(bool(p.get("suspicious")) for p in parsed) if part else "",
                 }
             )
     path = workspace / "reports" / "report.csv"

@@ -33,3 +33,10 @@ Rules:
     main ingredient, diet). Never invent a tag.
 12. `missing_info`: list anything a cook would need that the sources do not say (for example "oven
     temperature"). Do not guess it.
+13. `llm_parse`: for every ingredient, split its English `line` into parts. `quantity` is the amount as
+    a number ("1/2" gives 0.5, "1 1/2" gives 1.5, "½" gives 0.5); for a range ("1-2 tbsp") `quantity` is
+    the low end and `quantity_max` the high end. `unit` is the full English unit name ("tablespoon",
+    "teaspoon", "gram", "cup", "pinch", "clove"), or null when there is none ("2 onions"). `food` is the
+    plain English food name in the singular where natural ("onion", "cumin seeds"). `note` holds size
+    words, preparation and comments ("small", "finely chopped", "to taste"); null when there are none.
+    When the line gives no amount, `quantity` and `unit` are null. Never put a unit or a size in `food`.

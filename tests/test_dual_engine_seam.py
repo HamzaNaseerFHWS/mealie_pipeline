@@ -118,7 +118,9 @@ def test_a_line_where_nlp_is_sure_takes_nlp_and_one_where_it_is_not_takes_the_ll
 
 
 def test_a_line_neither_engine_can_find_a_food_in_sends_the_recipe_to_review(world: DualWorld):
-    world.engine = FakeIngredientEngine({**ENGINE.parses, "salt, to taste": EngineParse(None, None, "", "", "", 0.1)})
+    world.engine = FakeIngredientEngine(
+        {**ENGINE.parses, "salt, to taste": EngineParse(None, None, "", "", "", 0.1)}
+    )
     script(world, **{"salt, to taste": {"note": "to taste"}})
 
     result = run(world)
@@ -128,8 +130,9 @@ def test_a_line_neither_engine_can_find_a_food_in_sends_the_recipe_to_review(wor
     verify = verify_of(world)
     assert verify["outcome"] == "review"
     assert "H4" in verify["failed_checks"]
-    assert "salt, to taste" in check(verify, "H4")["details"]
-    assert parsed_of(world)["salt, to taste"]["parse_status"] == "unparsed"
+    # Parsed lines and the Gate's details carry the original line as written in the Source.
+    assert "Salt, to taste" in check(verify, "H4")["details"]
+    assert parsed_of(world)["Salt, to taste"]["parse_status"] == "unparsed"
 
 
 def test_an_implausible_quantity_is_flagged_and_lowers_the_sanity_score(world: DualWorld):
@@ -160,8 +163,11 @@ def test_steps_link_to_their_ingredients_through_reference_ids(world: DualWorld)
     ids = {i["referenceId"]: i["originalText"] for i in recipe["recipeIngredient"]}
     linked = {r["referenceId"] for s in recipe["recipeInstructions"] for r in s["ingredientReferences"]}
     assert linked and linked <= set(ids)
-    step = next(s for s in recipe["recipeInstructions"] if "mustard oil" in s["text"].lower())
-    assert "2 tbsp mustard oil" in {ids[r["referenceId"]] for r in step["ingredientReferences"]}
+    # The fixture's step says "add the cumin seeds and sliced onions": the Food name and a plural.
+    step = next(s for s in recipe["recipeInstructions"] if "cumin seeds" in s["text"].lower())
+    assert {"1/2 tsp cumin seeds", "2 small onions"} <= {
+        ids[r["referenceId"]] for r in step["ingredientReferences"]
+    }
 
 
 def test_the_report_counts_lines_per_parse_status_and_suspicious_lines(world: DualWorld):

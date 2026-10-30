@@ -9,7 +9,7 @@ from mealie_pipeline.checks import (
     plausibility,
     quantity_sanity,
 )
-from mealie_pipeline.models import ParsedIngredient
+from mealie_pipeline.models import ParsedIngredient, ParseStatus
 
 KNOWN = ["okra", "onion", "oil", "salt", "garlic", "water"]
 
@@ -90,8 +90,10 @@ def test_food_overlap_is_a_jaccard_score():
     assert food_overlap(set(), set())[0] == 0.0
 
 
-def line(text, status="agreed", suspicious=()):
-    return ParsedIngredient(original_text=text, food_name=text, parse_status=status, suspicious=list(suspicious))
+def line(text, status: ParseStatus = "agreed", suspicious=()):
+    return ParsedIngredient(
+        original_text=text, food_name=text, parse_status=status, suspicious=list(suspicious)
+    )
 
 
 @pytest.mark.parametrize(
