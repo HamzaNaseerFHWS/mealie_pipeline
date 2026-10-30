@@ -331,6 +331,7 @@ def test_report_has_one_row_per_recipe_part_and_one_per_video_without_parts(thre
         "classify_status",
         "linkcheck_status",
         "scrape_status",
+        "outline_status",
         "extract_status",
         "parse_status",
         "tag_status", "verify_status", "upload_status", "score", "outcome", "failed_checks",

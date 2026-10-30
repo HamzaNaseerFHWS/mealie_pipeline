@@ -135,9 +135,11 @@ MIGRATIONS = [
         added_at TEXT NOT NULL
     );
     """,
+    # Migration 9 (ticket 12): a Recipe Part's slice of the Video's Sources (set by `outline`).
+    "ALTER TABLE recipe_parts ADD COLUMN outline_json TEXT;",
 ]
 
-PART_JSON_FIELDS = {"extracted", "parsed", "tags", "verify"}
+PART_JSON_FIELDS = {"extracted", "parsed", "tags", "verify", "outline"}
 PART_FIELDS = PART_JSON_FIELDS | {"slug", "mealie_url", "warnings"}
 
 
@@ -179,6 +181,7 @@ class RecipePart:
     mealie_url: str | None
     warnings: list[str]
     verify: dict[str, Any] | None = None
+    outline: dict[str, Any] | None = None  # this part's slice of the Sources; None for a one-recipe Video
 
 
 @dataclass(frozen=True)
@@ -395,6 +398,35 @@ class StateStore:
         self._db.commit()
         return item_key
 
+    def video_parts(self, video_key: str) -> list[RecipePart]:
+        keys = self._db.execute(
+            "SELECT item_key FROM recipe_parts WHERE video_key = ? ORDER BY part_index", (video_key,)
+        ).fetchall()
+        return [self.part(r["item_key"]) for r in keys]
+
+    def replace_parts(self, video_key: str, outlines: list[dict[str, Any] | None]) -> list[str] | None:
+        """Gives the Video one Recipe Part per outline slice, in place of its earlier ones. None (and
+        nothing changed) when any earlier part was already uploaded."""
+        old = self.video_parts(video_key)
+        if any(p.slug for p in old):
+            return None
+        for part in old:
+            self._db.execute("DELETE FROM recipe_parts WHERE item_key = ?", (part.item_key,))
+            self._db.execute(
+                "DELETE FROM stage_records WHERE entity_kind = 'part' AND entity_key = ?", (part.item_key,)
+            )
+        keys = []
+        for index, outline in enumerate(outlines, start=1):
+            key = f"{video_key}#{index}"
+            self._db.execute(
+                "INSERT INTO recipe_parts (item_key, video_key, part_index, part_count, outline_json)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (key, video_key, index, len(outlines), json.dumps(outline) if outline else None),
+            )
+            keys.append(key)
+        self._db.commit()
+        return keys
+
     def part(self, item_key: str) -> RecipePart:
         row = self._db.execute("SELECT * FROM recipe_parts WHERE item_key = ?", (item_key,)).fetchone()
         if row is None:
@@ -411,6 +443,7 @@ class StateStore:
             row["mealie_url"],
             json.loads(row["warnings_json"]),
             _loads(row["verify_json"]),
+            _loads(row["outline_json"]),
         )
 
     def parts(self) -> list[RecipePart]:

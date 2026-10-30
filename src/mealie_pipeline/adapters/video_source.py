@@ -64,6 +64,10 @@ class VideoSource(Protocol):
         `cookiefile` is the `secrets/cookies.txt` of `mp login`, for private lists."""
         ...
 
+    def frame(self, url: str, at_s: float, dest: Path) -> Path | None:
+        """One picture from the Video at `at_s` seconds, saved as `dest`; None when it can't be grabbed."""
+        ...
+
 
 def entry_from_flat(item: dict[str, Any]) -> PlaylistEntry | None:
     """Maps one `extract_flat` playlist entry; None when it has no usable URL or id."""
@@ -136,6 +140,29 @@ def vtt_text(vtt: str) -> str:
 
 
 class YtDlpVideoSource:
+    def frame(self, url: str, at_s: float, dest: Path) -> Path | None:
+        import subprocess
+
+        import yt_dlp
+        from yt_dlp.utils import DownloadError
+
+        options = {"quiet": True, "no_warnings": True, "noplaylist": True, "format": "best[height<=720]/best"}
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[arg-type]
+                info = ydl.extract_info(url, download=False)
+        except DownloadError:
+            return None
+        stream = info.get("url") if isinstance(info, dict) else None
+        if not stream:
+            return None
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        command = ["ffmpeg", "-y", "-ss", f"{at_s:g}", "-i", stream, "-frames:v", "1", "-q:v", "2", str(dest)]
+        try:
+            done = subprocess.run(command, capture_output=True, timeout=120, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return dest if done.returncode == 0 and dest.is_file() else None
+
     def metadata(self, url: str) -> VideoMeta:
         import yt_dlp  # imported lazily: it is slow to import and not needed by most tests
         from yt_dlp.utils import DownloadError

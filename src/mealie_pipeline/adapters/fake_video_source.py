@@ -29,6 +29,16 @@ class FakeVideoSource:
         self.private: set[str] = set()  # playlist URLs that need a login (a cookie file)
         self.cookiefiles: list[Path] = []  # every cookie file a listing was given
         self.calls: list[str] = []
+        self.frame_image: bytes | None = None  # what `frame` saves; None means no frame can be grabbed
+        self.frame_calls: list[tuple[str, float]] = []
+
+    def frame(self, url: str, at_s: float, dest: Path) -> Path | None:
+        self.frame_calls.append((url, at_s))
+        if self.frame_image is None:
+            return None
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(self.frame_image)
+        return dest
 
     def metadata(self, url: str) -> VideoMeta:
         self.calls.append(url)
