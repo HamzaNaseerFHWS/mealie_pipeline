@@ -30,6 +30,7 @@ Every decision needed to **build and run** the pipeline over all of the user's S
 - [Which Roman Urdu/Hindi spelling style?](issues/11-romanization-style.md): common creator-caption style, chosen by the planner.
 - [Where does everything run?](issues/12-runtime-environment.md): Windows laptop, Mealie on another PC via Tailscale. Agents test with fakes.
 - [How does the pipeline find a recipe page on the web from just a recipe name?](issues/21-recipe-name-search-provider.md): one-off, so anything that works now. `ddgs` (no key) primary, Claude Code's WebSearch via `claude -p` as fallback. Google's API is closed to new users.
+- [How is Instagram's saved "All posts" grid enumerated?](issues/15-instagram-saved-enumeration.md): listen to the page's own responses (REST `items[].media` with `more_available`/`next_max_id`, or GraphQL `xdt_api__v1__feed__saved__posts`), recognized by shape and never forged. DOM anchors are the fallback. Stop on login/challenge redirects, 429, or `*_required`. yt-dlp is used with cookies, `curl-cffi` and `ignore_no_formats_error`. Location comes from the feed, not yt-dlp.
 
 ## Not yet specified
 
