@@ -703,3 +703,27 @@ def review_classify(ctx: typer.Context) -> None:
         set_override(path, video.video_key, REVIEW_KEYS[answer])
         decided += 1
     typer.echo(f"\n{decided} override(s) saved to {path.name}. Run `mp run` to continue with them.")
+
+
+@app.command("import-instagram")
+def import_instagram(
+    ctx: typer.Context,
+    folder: Annotated[Path, typer.Argument(help="Folder with saved_posts.json and saved_collections.json.")],
+    collection: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--collection", "-c", help="Collection to import (repeatable). `(none)` = in no collection."
+        ),
+    ] = None,
+    name: Annotated[str, typer.Option("--name", help="Name of the Saved List to create.")] = "export",
+) -> None:
+    """Import saved Instagram posts from the data export as a Saved List (no login needed)."""
+    from mealie_pipeline.instagram_export import import_posts, read_export
+
+    posts = read_export(folder)
+    wanted = {c.strip().casefold() for c in collection or []}
+    if wanted:
+        posts = [p for p in posts if wanted & {c.casefold() for c in p.collections}]
+    store = _open_pipeline(ctx.obj).store
+    new = import_posts(store, f"instagram:{name}", str(folder), posts)
+    typer.echo(f"instagram:{name}: {len(posts)} posts, {len(new)} new. Run `mp run --list instagram:{name}`.")

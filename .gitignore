@@ -28,3 +28,4 @@ dist/
 .tools/
 logs/
 pipeline.db.bak-*
+instagram_data/
