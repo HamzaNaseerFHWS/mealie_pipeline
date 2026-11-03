@@ -1,7 +1,7 @@
 # 19: Confirm run defaults before the full run
 
 Type: grilling
-Status: open
+Status: resolved
 Blocked by: 13, 20
 Mode: HITL
 
@@ -27,4 +27,4 @@ Resolve with `/grilling` in a live session with the user. Never answer on the us
 
 ## Answer
 
-_pending_
+Out of date: superseded by the real runs. The Auto Sync questions (7-10) get asked when ticket 24 is done.

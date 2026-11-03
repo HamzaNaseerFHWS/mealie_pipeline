@@ -9,7 +9,9 @@ The commands are AFK work; the labelling and sign-off need the user.
 
 **Blocked by:** 05
 
-**Status:** ready-for-human
+**Status:** wontfix
+
+> Dropped: recipe vs. not-recipe classification is already done.
 
 - [ ] `mp classify sample` and `mp classify eval` are implemented and tested at the pipeline seam with fixture labels. The eval numbers in the test are hand-computed from the fixture.
 - [ ] The user labels the 50 items (with the agent's help in the terminal).

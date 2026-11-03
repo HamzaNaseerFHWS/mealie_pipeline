@@ -1,7 +1,7 @@
 # 20: Which existing tags do we keep, and which new tags does the collection need?
 
 Type: grilling
-Status: open
+Status: deferred
 Blocked by: 13
 Mode: HITL
 
@@ -57,3 +57,7 @@ When resolved, the Answer must contain:
 ## Comments
 
 - 2026-10-10: Context from a hand-run test. A recipe pushed through the API had no tags until the PATCH set `tags: [{id, name, slug}]` with ids that already exist. PATCH never creates a tag. The 53 tags and 7 categories (Appetizer, Dessert, Main Dish, Sauce, Side Dish, Snack, Soup) were readable with the same token. Categories stay out of scope for v1.
+
+## Deferred
+
+Skipped for now. The user will do a database-wide tag run later and decide the taxonomy then.

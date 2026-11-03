@@ -24,7 +24,7 @@
 - [ ] Output from the scheduled run (stdout/stderr) goes to `reports/auto/last-run.log`, rotated to keep the last 10, so a silent failure can be diagnosed.
 - [ ] `RUNBOOK.md` gets a section *Keeping Mealie in sync*. It covers how to install, check, pause (`mp schedule remove`) and resume. It also covers what the toasts mean, re-logging a platform after `needs_login`, and the fact that unsaving a Video never deletes its recipe.
 
-**Hand-off to the user (ready-for-human after the code is done), only after wayfinder 19 questions 7–10 are answered:**
+**Hand-off to the user (ready-for-human after the code is done), only after the user confirms the Auto Sync schedule, check intervals, cap per cycle and notifications (the old wayfinder 19 questions 7–10):**
 1. Run `uv run mp schedule install`.
 2. Open Task Scheduler and confirm the task `mealie_pipeline auto sync` exists with the agreed schedule.
 3. Run it once with *Run* in Task Scheduler and check `reports/auto/` for the summary.

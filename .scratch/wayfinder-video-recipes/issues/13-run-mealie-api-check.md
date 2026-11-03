@@ -1,7 +1,7 @@
 # 13: Run the Mealie API check on the laptop
 
 Type: task
-Status: open
+Status: resolved
 Blocked by: none
 Mode: HITL (only the user can reach the Mealie PC)
 
@@ -23,7 +23,7 @@ Does the Mealie instance accept a token-authenticated write of a fully parsed, t
 
 ## Answer
 
-_pending_
+Done: the token works and recipes have been uploaded.
 
 ## Comments
 

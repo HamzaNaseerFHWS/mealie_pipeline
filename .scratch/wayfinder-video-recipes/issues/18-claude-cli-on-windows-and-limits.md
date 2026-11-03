@@ -1,7 +1,7 @@
 # 18: How does `claude -p` behave on Windows, and what happens when Pro usage limits hit?
 
 Type: research
-Status: open
+Status: resolved
 Blocked by: none
 Mode: AFK
 
@@ -20,4 +20,4 @@ Find out and record (from the official Claude Code docs at code.claude.com and t
 
 ## Answer
 
-_pending_
+Not needed: it only gated the usage governor (ticket 13), which was dropped.

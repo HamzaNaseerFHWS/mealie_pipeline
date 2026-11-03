@@ -14,7 +14,9 @@
 
 **Blocked by:** 03; wayfinder ticket `18-claude-cli-on-windows-and-limits.md` (read its Answer for the exact limit signals, Windows executable and argument-length handling)
 
-**Status:** ready-for-agent
+**Status:** wontfix
+
+> Dropped: videos are run one at a time, so no spending limits or pausing are needed.
 
 **Read first:** `spec.md` modules 3 (`LLMBackend`) and 16; `docs/adr/0002`.
 
