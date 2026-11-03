@@ -12,7 +12,7 @@ The bot already accepts several chats (comma-separated `TELEGRAM_CHAT_ID`); each
 
 **Blocked by:** None for the code (the bot's API is built); 31 to run it in Docker.
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `inbox_bot/README.md` (API table), `inbox_bot/bot.py`, `src/mealie_pipeline/pipeline.py` (`run`, `only_videos`), `src/mealie_pipeline/recipe_requests.py`, `url_normalizer.py`.
 
