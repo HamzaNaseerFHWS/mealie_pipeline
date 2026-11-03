@@ -1,4 +1,4 @@
-"""Instagram data export -> Saved List: reads `saved_posts.json` / `saved_collections.json` from
+"""Instagram / Facebook data export -> Saved List: reads `saved_posts.json` / `saved_collections.json` from
 "Download your information", so no login and no scrolling is needed. The caption and the owner come
 from the export and become the Video's metadata (the `metadata` stage is recorded done)."""
 
@@ -72,17 +72,40 @@ def read_export(folder: Path) -> list[ExportedPost]:
     return list(posts.values())
 
 
-def import_posts(store: StateStore, list_key: str, source: str, posts: list[ExportedPost]) -> list[str]:
+def read_facebook_collections(path: Path) -> list[ExportedPost]:
+    """The saves of Facebook's `collections.json`, once per link; a save has no caption there, so the
+    `metadata` stage fetches it."""
+    posts: dict[str, ExportedPost] = {}
+    for record in json.loads(path.read_text(encoding="utf-8")):
+        name = ""
+        for entry in record.get("label_values", []):
+            if entry.get("label") == "Title":
+                name = _fix(entry["value"]).strip()
+            for save in entry.get("dict", []) if entry.get("title") == "Saves" else []:
+                fields = {x.get("label"): x.get("href") or x.get("value", "") for x in save.get("dict", [])}
+                url = fields.get("URL", "")
+                if not url:
+                    continue
+                post = posts.setdefault(url, ExportedPost(url))
+                post.owner = post.owner or _fix(fields.get("Name", ""))
+                if name not in post.collections:
+                    post.collections.append(name)
+    return list(posts.values())
+
+
+def import_posts(
+    store: StateStore, list_key: str, source: str, posts: list[ExportedPost], platform: str = "instagram"
+) -> list[str]:
     """Registers the list and its Videos; returns the Video Keys that are new to the list."""
-    store.add_list(list_key, "instagram", source)
+    store.add_list(list_key, platform, source)
     keys: list[str] = []
     for post in posts:
         normalized = normalize(post.url)
-        if normalized is None or normalized.platform != "instagram":
+        if normalized is None or normalized.platform != platform:
             continue
         key = normalized.video_key
-        store.add_video(key, "instagram", normalized.video_id, post.url, normalized.canonical_url)
-        if store.video(key).metadata is None:
+        store.add_video(key, platform, normalized.video_id, post.url, normalized.canonical_url)
+        if platform == "instagram" and store.video(key).metadata is None:
             first_line = post.caption.strip().split("\n", 1)[0][:100]
             meta = VideoMeta(
                 title=first_line or f"Instagram post by {post.owner}",

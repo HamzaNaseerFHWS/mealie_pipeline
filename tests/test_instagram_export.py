@@ -91,3 +91,48 @@ def test_import_registers_a_list_with_metadata_from_the_export(tmp_path: Path):
         and video.metadata["channel"] == "chef"
     )
     assert store.stage_status("video", "instagram:AAAAA1", "metadata") == "done"
+
+
+def test_facebook_collections_import_only_the_chosen_collection_once_per_link(tmp_path: Path):
+    def save(url: str, name: str) -> dict:
+        return {
+            "dict": [{"label": "URL", "value": url, "href": url}, {"label": "Name", "value": name}],
+            "title": "",
+        }
+
+    reel = "https://www.facebook.com/reel/2031777400770877/"
+    data = [
+        {
+            "label_values": [
+                {"label": "Title", "value": "For later"},
+                {"title": "Saves", "dict": [save(reel, "Tasty"), save(reel, "")]},
+            ]
+        },
+        {
+            "label_values": [
+                {"label": "Title", "value": "House"},
+                {"title": "Saves", "dict": [save("https://www.facebook.com/reel/999999999/", "Tiles")]},
+            ]
+        },
+    ]
+    (tmp_path / "collections.json").write_text(json.dumps(data), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--workspace",
+            str(tmp_path),
+            "import-facebook",
+            str(tmp_path / "collections.json"),
+            "-c",
+            "For later",
+            "--name",
+            "later",
+        ],
+        obj=fake_adapters(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert StateStore(tmp_path / "pipeline.db").list_video_keys("facebook:later") == {
+        "facebook:2031777400770877"
+    }
