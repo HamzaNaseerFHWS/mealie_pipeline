@@ -36,6 +36,7 @@ from mealie_pipeline.request_sheet import SheetError, read_sheet
 from mealie_pipeline.sessions import load_platforms
 from mealie_pipeline.settings import Settings, load_settings
 from mealie_pipeline.store import StateStore
+from mealie_pipeline.subtitle_queue import requeue
 from mealie_pipeline.url_normalizer import normalize, normalize_list
 
 LOGIN_POLL_SECONDS = 2.0  # how often `mp login` looks for the session cookies
@@ -483,6 +484,25 @@ def retry(
         stage = min(failed, key=STAGES.index)
     removed = store.reset_stages(_stages_from(stage), keys=[key])
     typer.echo(f"{key}: reset from {stage} ({removed} stage records). Run `mp run` to process it.")
+
+
+@app.command("requeue-subtitles")
+def requeue_subtitles(
+    ctx: typer.Context,
+    status_csv: Annotated[
+        Path | None,
+        typer.Option(
+            "--csv", help="Status sheet with needs_transcription rows (default reports/youtube_status.csv)."
+        ),
+    ] = None,
+) -> None:
+    """Send Videos that had no text back through scrape: their subtitles are read now (ticket 34)."""
+    app_ctx: AppContext = ctx.obj
+    path = status_csv or app_ctx.workspace / "reports" / "youtube_status.csv"
+    keys = requeue(_open_pipeline(app_ctx).store, app_ctx.workspace, path)
+    for key in keys:
+        typer.echo(f"requeued {key}")
+    typer.echo(f"{len(keys)} Videos requeued. Run `mp run` to read their subtitles.")
 
 
 @app.command()

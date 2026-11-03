@@ -119,6 +119,8 @@ PARALLEL_STAGES = {"scrape", "extract"}
 # pending) while metadata, classify, scrape, outline and extract go on. `linkcheck` is re-done at upload.
 MEALIE_STAGES = {"parse", "tag", "verify", "upload"}
 TAG_CACHE = Path("data") / "mealie_tags.json"  # the tag names extract offers when Mealie is down
+SUBTITLE_MAX_CHARS = 20000  # of a Video's subtitles kept as the `sub` Source
+NO_SUBTITLES = ""  # what `subtitles.txt` holds when the Video has none (asked once, not again)
 WEB_STRUCTURED_RULE = (
     "The [SRC:web] block is the creator's own written recipe. Keep the website's quantities and wording "
     "and only fill gaps (missing times or servings) and merge in useful tips from the video description; "
@@ -798,6 +800,8 @@ class Pipeline:
         path = self._web_path(video_key)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(result.model_dump_json(indent=1), encoding="utf-8")
+        if not (result.usable and result.recipe):
+            self._fetch_subtitles(video_key, [meta.description, comment], report)
         if result.usable and result.recipe:
             how = f" via {result.link_source}" if result.link_source in ("link_in_bio", "site_search") else ""
             self._detail[video_key] = f"{result.recipe.extraction_method} {result.final_url}{how}"
@@ -805,6 +809,28 @@ class Pipeline:
             self._detail[video_key] = f"no website recipe ({result.reason})"
             if result.reason in ("needs_browser", "robots", "error"):
                 report.warnings.append(f"{video_key}: recipe page not read ({result.reason})")
+
+    def _fetch_subtitles(self, video_key: str, texts: list[str], report: RunReport) -> None:
+        """Ticket 34: a Video whose description and comment hold no recipe gets its subtitles (the
+        creator's, else automatic captions) as the `sub` Source. None is not an error: the Video
+        then goes on to a link-only stub (ticket 39). There is no audio transcription (ADR 0007)."""
+        if has_usable_text(texts):
+            return
+        path = self._web_path(video_key).with_name("subtitles.txt")
+        if path.is_file():
+            return  # asked before
+        video = self.store.video(video_key)
+        try:
+            text = self.a.videos.subtitles(video.canonical_url)
+        except VideoSourceError as err:
+            report.warnings.append(f"{video_key}: subtitles not read ({err})")
+            return  # not recorded: asked again on the next scrape
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text[:SUBTITLE_MAX_CHARS] if text.strip() else NO_SUBTITLES, encoding="utf-8")
+
+    def _subtitles(self, video_key: str) -> str:
+        path = self._web_path(video_key).with_name("subtitles.txt")
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
 
     def _outline(self, video_key: str, report: RunReport, dry_run: bool) -> None:
         """One `strong` call per Video that shows signs of several recipes; each recipe becomes its own
@@ -832,6 +858,7 @@ class Pipeline:
             )
             + (f"Recipes on the website page: {json.dumps(names, ensure_ascii=False)}\n" if names else "")
             + f"\n[SRC:desc]\n{meta.description}\n[/SRC]\n"
+            + (f"\n[SRC:sub]\n{subs}\n[/SRC]\n" if (subs := self._subtitles(video_key)) else "")
         )
         raw = self.a.llm.complete("outline", prompt, Outline.model_json_schema(), "strong")
         try:
@@ -1046,6 +1073,8 @@ class Pipeline:
         comment = self._web_path(video_key).with_name("comment.txt")
         if comment.is_file():
             sources["cmt"] = comment.read_text(encoding="utf-8")
+        if subtitles := self._subtitles(video_key):
+            sources["sub"] = subtitles
         return sources
 
     def _sources(self, item_key: str) -> dict[str, str]:
@@ -1064,6 +1093,8 @@ class Pipeline:
         comment = self._web_path(part.video_key).with_name("comment.txt")
         if comment.is_file():
             sources["cmt"] = comment.read_text(encoding="utf-8")
+        if subtitles := self._subtitles(part.video_key):
+            sources["sub"] = subtitles
         return sources
 
     def _evaluate(self, item_key: str) -> Evaluation:

@@ -1,6 +1,7 @@
 """The VideoSource port: yt-dlp as a library. `metadata`, `pinned_comments`, `subtitles` and
 `list_playlist`."""
 
+import html
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -128,14 +129,27 @@ def pick_subtitle_track(info: dict[str, Any]) -> str | None:
 
 
 def vtt_text(vtt: str) -> str:
-    """Plain text of a WebVTT file: no header, cue timings or tags, no repeated lines."""
+    """Plain text of a WebVTT (or SRT) file: no header, cue numbers, timings or tags, and no repeats.
+
+    YouTube's automatic captions roll: each cue repeats the line before it and adds a few words, so
+    a line that an earlier one already holds, or that only extends the line before, is merged."""
     lines: list[str] = []
     for raw in vtt.splitlines():
-        line = re.sub(r"<[^>]+>", "", raw).strip()
-        if not line or line == "WEBVTT" or "-->" in line or re.match(r"^(Kind|Language|NOTE)\b", line):
+        line = html.unescape(re.sub(r"<[^>]+>", "", raw)).replace("\u00a0", " ")
+        line = re.sub(r"\[(?:music|applause|laughter|musik|♪)[^\]]*\]|♪", " ", line, flags=re.IGNORECASE)
+        line = " ".join(line.split())
+        if not line or line == "WEBVTT" or "-->" in line or line.isdigit():
             continue
-        if not lines or lines[-1] != line:
-            lines.append(line)
+        if re.match(r"^(Kind|Language|NOTE|STYLE|REGION)\b", line):
+            continue
+        if lines and (line == lines[-1] or line in lines[-3:]):
+            continue
+        if lines and line.startswith(lines[-1]):  # the rolling cue grew: keep the longer line
+            lines[-1] = line
+            continue
+        if lines and lines[-1].endswith(line):
+            continue
+        lines.append(line)
     return "\n".join(lines)
 
 
