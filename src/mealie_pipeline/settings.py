@@ -63,6 +63,7 @@ class WebSettings(BaseModel):
     render_blocked: bool = True  # a page that came back blocked / JS-only is retried in the Browser
     site_search: bool = True  # search the Creator's Recipe Website when the Video links no recipe
     site_search_min_score: float = 85  # fuzzy title match needed for a site-search page
+    browser_headless: bool = False  # true in the container: there is no screen to show Chrome on
 
 
 class FindSettings(BaseModel):

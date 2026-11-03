@@ -77,5 +77,5 @@ def build_adapters(settings: Settings, workspace: Path) -> Adapters:
             slots=claude_slots,
         ),
         collectors={"youtube": YouTubeCollector(videos, cookiefile=cookies_file(workspace))},
-        browser=PlaywrightBrowser(profile_dir(workspace)),
+        browser=PlaywrightBrowser(profile_dir(workspace), headless=settings.web.browser_headless),
     )

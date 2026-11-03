@@ -141,3 +141,22 @@ def test_doctor_lists_tag_rules_whose_tag_is_missing_from_mealie(workspace, meal
 
     assert "[WARN] Tag rules: 1 rule names a tag missing from Mealie: Ghost" in result.output
     assert result.exit_code == 0
+
+
+def test_the_subscription_token_of_claude_setup_token_counts_as_a_subscription_login():
+    from mealie_pipeline.doctor import _claude
+
+    class NoLogin(FakeSystemProbe):
+        def claude_auth_status(self):
+            return '{"loggedIn": false}'
+
+    check = _claude(NoLogin(), {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat-x"})
+    assert check.status == "ok" and "CLAUDE_CODE_OAUTH_TOKEN" in check.detail
+    assert _claude(NoLogin(), {}).status == "fail"
+
+
+def test_an_api_key_in_the_environment_fails_the_claude_check():
+    from mealie_pipeline.doctor import _claude
+
+    check = _claude(FakeSystemProbe(), {"ANTHROPIC_API_KEY": "sk-ant-api-x"})
+    assert check.status == "fail" and "ANTHROPIC_API_KEY" in check.detail
