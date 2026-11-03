@@ -51,6 +51,13 @@ _Avoid_: hallucination check
 One row of a user's CSV/Excel sheet of recipe names: "find this recipe on the web and add it to Mealie". It becomes one Recipe Part with Item Key `web:<url hash>#1` once its page is found.
 _Avoid_: wish, row, lookup
 
+**Partial Recipe**:
+A Recipe Part with ingredients and no steps, usually from an ingredients-only caption. Uploaded with the tag `partial-recipe` (ticket 39).
+
+**Link-only Stub**:
+A Video `classify` kept whose text (caption, pinned comment, subtitles, linked page) holds no recipe. It goes to Mealie as name, thumbnail, source link and tags, plus `link-only`, with no extraction call. Nothing upgrades it automatically (ADR 0007).
+_Avoid_: placeholder, empty recipe
+
 **Recipe Part**:
 One recipe inside a Video. Every Video has one or more; a Video with several recipes has several independent Recipe Parts, keyed `platform:video_id#n`.
 _Avoid_: sub-recipe (that is a section inside one recipe), segment

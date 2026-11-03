@@ -4,6 +4,7 @@ import csv
 import json
 from pathlib import Path
 
+from mealie_pipeline.partial import KIND_TAGS, recipe_kind
 from mealie_pipeline.pipeline import STAGES, VIDEO_STAGES, also_on
 from mealie_pipeline.scrape import web_json_path
 from mealie_pipeline.store import StateStore
@@ -22,6 +23,7 @@ REPORT_COLUMNS = [
     "link_source",
     "also_on",
     *(f"{stage}_status" for stage in STAGES),
+    "recipe_kind",
     "score",
     "outcome",
     "failed_checks",
@@ -64,7 +66,7 @@ def write_report(store: StateStore, workspace: Path) -> Path:
     """One row per Recipe Part, plus one row per Video that has no Recipe Part yet (e.g. metadata failed).
 
     Columns: item_key, video_url, platform, video_label (from `classify`; empty if not classified),
-    `<stage>_status` for every stage (empty = not reached),
+    `<stage>_status` for every stage (empty = not reached), recipe_kind (recipe, partial-recipe or link-only),
     score / outcome / failed_checks / extraction_attempts (the Gate), failure_reason (the last error
     of the first failed or held-back stage), mealie_slug, mealie_url, created_foods
     (Foods first created for this Video), tags (`;`-separated), warnings (such as image_missing),
@@ -99,6 +101,7 @@ def write_report(store: StateStore, workspace: Path) -> Path:
                     "link_source": link_source(workspace, video.platform, video.video_id),
                     "also_on": ";".join(also_on(store, video.video_key)),
                     **statuses,
+                    "recipe_kind": _kind_label(part.extracted) if part and part.extracted else "",
                     "score": verify.get("score", ""),
                     "outcome": verify.get("outcome", ""),
                     "failed_checks": ";".join(verify.get("failed_checks", [])),
@@ -120,3 +123,9 @@ def write_report(store: StateStore, workspace: Path) -> Path:
         writer.writeheader()
         writer.writerows(rows)
     return path
+
+
+def _kind_label(extracted: dict) -> str:
+    """`recipe`, `partial-recipe` (ingredients only) or `link-only` (a stub)."""
+    kind = recipe_kind(extracted)
+    return KIND_TAGS.get(kind, "recipe")

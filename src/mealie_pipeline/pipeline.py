@@ -51,6 +51,13 @@ from mealie_pipeline.models import (
 )
 from mealie_pipeline.name_clash import distinct_name, domain_of, find_clash, same_source, slug_of
 from mealie_pipeline.outline import OutlineError, detect_signals, segment, validate_outline
+from mealie_pipeline.partial import (
+    KIND_TAGS,
+    RecipeKind,
+    has_usable_text,
+    recipe_kind,
+    stub_name,
+)
 from mealie_pipeline.payload import build_payload
 from mealie_pipeline.protein import ProteinRules, RecipeText, detect, tag_key
 from mealie_pipeline.recipe_extraction import SourceRecipe, extract_recipes
@@ -784,6 +791,10 @@ class Pipeline:
         )
         if result.website and result.website_source:  # the first Video that links a website teaches it
             registry.learn(handle, result.website, result.website_source, video_key)
+        comment_path = self._web_path(video_key).with_name("comment.txt")
+        if comment.strip():  # the Creator's pinned comment is a Source too (often the ingredient list)
+            comment_path.parent.mkdir(parents=True, exist_ok=True)
+            comment_path.write_text(comment, encoding="utf-8")
         path = self._web_path(video_key)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(result.model_dump_json(indent=1), encoding="utf-8")
@@ -915,8 +926,10 @@ class Pipeline:
         meta = VideoMeta.model_validate(video.metadata)
         web = self._part_web(part)
         sources = self._sources(item_key)
-        if not sources["desc"].strip() and web is None:
-            raise StageFailure("the video has no description or website recipe to extract from")
+        if web is None and video.platform != "web":
+            text = [v for k, v in sources.items() if k != "web"]
+            if not has_usable_text(text):  # nothing to extract: a link-only stub, no LLM call
+                return self._make_stub(item_key, meta)
         tags = self._allowed_tags()
         prompt = (
             f"Title: {meta.title}\nUploader: {meta.uploader}\nURL: {video.canonical_url}\n\n"
@@ -941,8 +954,9 @@ class Pipeline:
         if web is not None:
             rule = WEB_STRUCTURED_RULE if web.structured else WEB_TEXT_RULE
             prompt += f"[SRC:web]\n{web_text(web)}\n[/SRC]\n\n{rule}\n\n"
-        if sources["desc"].strip():
-            prompt += f"[SRC:desc]\n{sources['desc']}\n[/SRC]\n"
+        for label in ("desc", "cmt", "sub"):
+            if sources.get(label, "").strip():
+                prompt += f"[SRC:{label}]\n{sources[label]}\n[/SRC]\n"
         if findings:
             prompt += (
                 "\nYour previous extraction of this video failed verification. Fix these problems, "
@@ -962,9 +976,26 @@ class Pipeline:
             raise StageFailure(
                 f"the {'description and website page' if web else 'description'} does not contain a recipe"
             )
-        if not recipe.ingredients or not recipe.instructions:
-            raise StageFailure("the extraction has no ingredients or no steps")
+        if not recipe.ingredients:
+            raise StageFailure("the extraction has no ingredients")
+        # Ingredients without steps is a partial recipe (an ingredients-only caption): kept as it is.
         self.store.update_part(item_key, extracted=recipe.model_dump())
+
+    def _make_stub(self, item_key: str, meta: VideoMeta) -> None:
+        """A link-only stub (ADR 0007): name, link, thumbnail and tags; no ingredients, no steps."""
+        part = self.store.part(item_key)
+        title = str((part.outline or {}).get("title") or "") or meta.title
+        name = stub_name(title, meta.description)
+        if name is None:
+            raise NeedsReview("link-only stub: no name could be built from the title or caption")
+        video = self.store.video(part.video_key)
+        stub = ExtractedRecipe(
+            is_recipe=True,
+            name=name,
+            description=f"Saved from {video.platform.capitalize()}. Open the original link for the recipe.",
+        )
+        self.store.update_part(item_key, extracted=stub.model_dump())
+        self._detail[item_key] = "link-only stub"
 
     def _parse(self, item_key: str, report: RunReport, dry_run: bool) -> None:
         part = self.store.part(item_key)
@@ -976,6 +1007,9 @@ class Pipeline:
     def _tag(self, item_key: str, report: RunReport, dry_run: bool) -> None:
         part = self.store.part(item_key)
         tags = self._choose_tags(part, report)
+        if recipe_kind(part.extracted) == "stub":  # no LLM: rule tags plus `link-only`
+            self.store.update_part(item_key, tags=tags)
+            return
         if not tags:  # one retry at the strongest tier, then the `To Review` fallback
             self._run_extraction(
                 item_key,
@@ -1007,8 +1041,12 @@ class Pipeline:
             desc = (
                 f"[Shared by every recipe in this video]\n{shared}\n\n[This recipe]\n{own}" if own else shared
             )
-        web = self._part_web(part)
-        return {"web": web_text(web), "desc": desc} if web is not None else {"desc": desc}
+        sources = {"web": web_text(web)} if (web := self._part_web(part)) is not None else {}
+        sources["desc"] = desc
+        comment = self._web_path(part.video_key).with_name("comment.txt")
+        if comment.is_file():
+            sources["cmt"] = comment.read_text(encoding="utf-8")
+        return sources
 
     def _evaluate(self, item_key: str) -> Evaluation:
         part = self.store.part(item_key)
@@ -1019,6 +1057,7 @@ class Pipeline:
             self._sources(item_key),
             [f.name for f in self.catalog.foods],
             self.settings.verify,
+            partial=recipe_kind(part.extracted) == "partial",
         )
 
     def _gate_config(self, video_key: str) -> VerifySettings:
@@ -1030,6 +1069,8 @@ class Pipeline:
         return cfg
 
     def _verify(self, item_key: str, report: RunReport, dry_run: bool) -> None:
+        if recipe_kind(self.store.part(item_key).extracted) == "stub":
+            return self._verify_stub(item_key)
         cfg = self._gate_config(self.store.part(item_key).video_key)
         attempts = 1
         evaluation = self._evaluate(item_key)
@@ -1079,6 +1120,29 @@ class Pipeline:
             )
             raise NeedsReview(f"score {judge.score}, failed {', '.join(verify['failed_checks'])}; see {path}")
 
+    def _verify_stub(self, item_key: str) -> None:
+        """A stub has nothing to ground: only the hard checks that it has a name, a link and a tag."""
+        part = self.store.part(item_key)
+        video = self.store.video(part.video_key)
+        checks = {
+            "H1": bool((part.extracted or {}).get("name", "").strip()),
+            "link": bool(video.canonical_url),
+            "H5": bool(part.tags),
+        }
+        failed = [c for c, ok in checks.items() if not ok]
+        verify = {
+            "score": None,
+            "outcome": "review" if failed else "link_only",
+            "failed_checks": failed,
+            "checks": [{"id": c, "kind": "hard", "passed": ok} for c, ok in checks.items()],
+            "dropped_ingredients": [],
+            "judge_problems": [],
+            "extraction_attempts": 0,
+        }
+        self.store.update_part(item_key, verify=verify)
+        if failed:
+            raise NeedsReview(f"link-only stub failed {', '.join(failed)}")
+
     def _judge(self, item_key: str, evaluation: Evaluation) -> "JudgeResult":
         """S7: an independent LLM review, only when the deterministic score is below the skip level."""
         cfg = self.settings.verify
@@ -1088,6 +1152,11 @@ class Pipeline:
         sources = "\n".join(f"[SRC:{k}]\n{v}\n[/SRC]" for k, v in self._sources(item_key).items())
         recipe = json.dumps(evaluation.recipe.model_dump(), ensure_ascii=False, indent=1)
         prompt = f"Final recipe:\n{recipe}\n\nSources:\n{sources}\n"
+        if not evaluation.recipe.instructions:
+            prompt += (
+                "\nThis is an ingredients-only recipe: the sources give no method, so missing steps "
+                "are expected and are not a problem.\n"
+            )
         try:
             raw = self.a.llm.complete("judge", prompt, Judge.model_json_schema(), "strong")
             problems = Judge.model_validate(raw).problems
@@ -1179,7 +1248,9 @@ class Pipeline:
             slug  # known at once, so a later item cannot repeat it
         )
         self._summaries.append({"slug": slug, "name": payload["name"], "orgURL": payload.get("orgURL")})
-        report.uploaded.append(f"{item_key}: {link}")
+        kind = recipe_kind(part.extracted)
+        suffix = {"partial": " (partial-recipe)", "stub": " (link-only)"}.get(kind, "")
+        report.uploaded.append(f"{item_key}: {link}{suffix}")
         report.warnings += [f"{item_key}: {w}" for w in warnings]
         self._uploaded_videos.add(part.video_key)
 
@@ -1279,6 +1350,13 @@ class Pipeline:
                 recipe = ExtractedRecipe.model_validate(part.extracted)
                 parsed = self._parse_ingredients(recipe, item_key, create=False)
                 tags = self._choose_tags(part, None, parsed=parsed) or [self._review_tag(create=False)]
+                if recipe_kind(part.extracted) == "stub":  # nothing to ground: straight to the payload
+                    payload = self._payload(recipe, [], tags, item_key, part.video_key, video.platform)
+                    out.mkdir(parents=True, exist_ok=True)
+                    path = out / (re.sub(r"[^A-Za-z0-9_.-]+", "_", item_key) + ".json")
+                    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+                    report.dry_run_files.append(path)
+                    continue
                 # The deterministic Gate only: no judge call, no retry, no tag created.
                 evaluation = evaluate(
                     recipe,
@@ -1287,6 +1365,7 @@ class Pipeline:
                     self._sources(item_key),
                     [f.name for f in self.catalog.foods],
                     self.settings.verify,
+                    partial=recipe_kind(part.extracted) == "partial",
                 )
                 # Hard checks other than H4 (Foods are not created in a dry run, so ids are missing),
                 # unless a line is `unparsed`: that one has no Food whatever is created.
@@ -1424,7 +1503,12 @@ class Pipeline:
         # Rule Tags (config rules, then Protein Tags) only name tags that exist in Mealie; `mp doctor`
         # reports the rest, and `mp tags protein --apply` is what creates Protein Tags.
         wanted = (rule_tags(facts, self.tag_rules) if self.tag_rules else []) + self._protein_tags(recipe)
-        rules = [e for name in wanted if (e := match_existing(name, names)) is not None]
+        kind = recipe_kind(part.extracted)
+        if kind == "stub":  # the platform and the Creator, when Mealie has such tags
+            video = self.store.video(part.video_key)
+            meta = video_meta(video)
+            wanted += [video.platform, creator_handle(meta), meta.uploader]
+        rules = [e for name in wanted if name and (e := match_existing(name, names)) is not None]
         chosen = choose(
             rules, llm, max_tags=len(rules) + len(llm)
         )  # capped below, once contradictions free slots
@@ -1433,10 +1517,28 @@ class Pipeline:
                 chosen.remove(tag)
                 if report is not None:
                     report.warnings.append(f"{part.item_key}: removed tag {tag!r}: the recipe has {food}")
-        return [
+        room = MAX_TAGS - (1 if kind in KIND_TAGS else 0)
+        tags = [
             {"id": by_key[tag_key(t)].id, "name": by_key[tag_key(t)].name, "slug": by_key[tag_key(t)].slug}
-            for t in chosen[:MAX_TAGS]
-        ]
+            for t in dict.fromkeys(chosen)
+        ][:room]
+        if kind in KIND_TAGS:
+            kind_tag = self._kind_tag(kind, create=report is not None)
+            tags = [t for t in tags if t["name"].casefold() != kind_tag["name"].casefold()][:room] + [
+                kind_tag
+            ]
+        return tags
+
+    def _kind_tag(self, kind: RecipeKind, *, create: bool) -> dict[str, Any]:
+        """`partial-recipe` or `link-only`: with the review tag, the only tags the pipeline creates."""
+        name = KIND_TAGS[kind]
+        existing = next((t for t in self.catalog.tags if t.name.casefold() == name.casefold()), None)
+        if existing is None and not create:
+            return {"id": "", "name": name, "slug": ""}
+        if existing is None:
+            existing = self.a.mealie.create_tag(name)
+            self.catalog.tags.append(existing)
+        return {"id": existing.id, "name": existing.name, "slug": existing.slug}
 
     def _suggest_tag(self, name: str, video_key: str) -> None:
         """A tag the LLM chose that Mealie does not have goes to `reports/suggested_tags.csv`, once."""
