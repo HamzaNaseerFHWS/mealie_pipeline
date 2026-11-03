@@ -8,7 +8,7 @@
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `src/mealie_pipeline/pipeline.py` (`_upload`), `adapters/mealie_http.py`, `existing_links.py`, tickets 22 and 18, `logs/upload.log` (the failures).
 
