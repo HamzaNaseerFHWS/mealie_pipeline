@@ -249,16 +249,17 @@ def test_a_missing_maxres_thumbnail_falls_back_to_hqdefault(world: World):
     assert world.mealie.images[next(iter(world.mealie.recipes))] == make_jpeg(480)
 
 
-def test_a_description_without_a_recipe_fails_that_item_and_uploads_nothing(world: World):
+def test_a_description_the_model_finds_no_recipe_in_becomes_a_link_only_stub(world: World):
     world.llm = recipe_llm()
     world.llm.script("extract", {"is_recipe": False, "name": "Vlog"})
     world.invoke("add", URL)
     result = world.invoke("run")
 
-    assert result.exit_code == 1
-    assert world.mealie.recipes == {}
-    assert world.store().stage_status("part", ITEM_KEY, "extract") == "failed"
-    assert "does not contain a recipe" in result.output
+    assert result.exit_code == 0, result.output
+    assert world.store().stage_status("part", ITEM_KEY, "extract") == "done"
+    stored = next(iter(world.mealie.recipes.values()))
+    assert stored["recipeIngredient"] == []
+    assert "link-only" in {t["name"] for t in stored["tags"]}
 
 
 def test_no_matching_tag_uploads_with_the_review_tag(world: World):

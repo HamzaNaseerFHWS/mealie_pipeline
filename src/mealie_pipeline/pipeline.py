@@ -55,6 +55,7 @@ from mealie_pipeline.partial import (
     KIND_TAGS,
     RecipeKind,
     has_usable_text,
+    ingredient_lines,
     recipe_kind,
     stub_name,
 )
@@ -814,7 +815,7 @@ class Pipeline:
         """Ticket 34: a Video whose description and comment hold no recipe gets its subtitles (the
         creator's, else automatic captions) as the `sub` Source. None is not an error: the Video
         then goes on to a link-only stub (ticket 39). There is no audio transcription (ADR 0007)."""
-        if has_usable_text(texts):
+        if ingredient_lines("\n".join(x for x in texts if x)) >= 2:  # prose about the dish is not a recipe
             return
         path = self._web_path(video_key).with_name("subtitles.txt")
         if path.is_file():
@@ -1008,6 +1009,8 @@ class Pipeline:
             )
             if problems := script_problems(recipe):
                 raise NeedsReview("wrong script after one retry: " + "; ".join(problems))
+        if not recipe.is_recipe and web is None and video.platform != "web" and part.outline is None:
+            return self._make_stub(item_key, meta)  # classify kept it as a recipe: save the link, not nothing
         if not recipe.is_recipe:
             raise StageFailure(
                 f"the {'description and website page' if web else 'description'} does not contain a recipe"
