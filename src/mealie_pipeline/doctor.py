@@ -1,6 +1,9 @@
 """`mp doctor`: check by check, is the setup in place? Pure logic over the adapters."""
 
 import json
+import os
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,7 +34,11 @@ class Check:
 
 
 def run_doctor(
-    adapters: Adapters, settings: Settings, workspace: Path | None = None, now: datetime | None = None
+    adapters: Adapters,
+    settings: Settings,
+    workspace: Path | None = None,
+    now: datetime | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> list[Check]:
     system = adapters.system
     checks = [
@@ -43,7 +50,7 @@ def run_doctor(
     ]
     if workspace is not None:
         checks += _sessions(workspace, now or datetime.now(UTC))
-    checks += _mealie(adapters, settings, workspace)
+    checks += _mealie(adapters, settings, workspace, clock)
     return checks
 
 
@@ -68,17 +75,31 @@ def _ffmpeg(system) -> Check:
     )
 
 
-def _claude(system) -> Check:
+def _claude(system, environ: Mapping[str, str] | None = None) -> Check:
+    """The CLI must use the Claude Pro subscription: a `claude` login, or the long-lived subscription
+    token of `claude setup-token` in CLAUDE_CODE_OAUTH_TOKEN (the container). Never an API key."""
+    env = os.environ if environ is None else environ
     login_hint = "run `claude` once and log in with your Claude Pro account (not an API key)"
     if not system.which("claude"):
         return Check("fail", "claude CLI", "not found on PATH", f"install Claude Code, then {login_hint}")
+    if env.get("ANTHROPIC_API_KEY"):
+        return Check(
+            "fail",
+            "claude CLI",
+            "ANTHROPIC_API_KEY is set: claude would bill the API instead of the Pro subscription",
+            "remove ANTHROPIC_API_KEY from the environment",
+        )
     raw = system.claude_auth_status()
     try:
         method = json.loads(raw or "").get("authMethod")
     except (ValueError, AttributeError):
-        return Check("fail", "claude CLI", "could not read `claude auth status`", login_hint)
+        method = None
     if method == "claude.ai":
         return Check("ok", "claude CLI", "logged in with a subscription (claude.ai)")
+    if env.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        return Check("ok", "claude CLI", "subscription token from CLAUDE_CODE_OAUTH_TOKEN")
+    if method is None:
+        return Check("fail", "claude CLI", "could not read `claude auth status`", login_hint)
     return Check("fail", "claude CLI", f"not using a subscription login (authMethod: {method})", login_hint)
 
 
@@ -122,7 +143,12 @@ def _session(status: SessionStatus, logins: dict[str, str]) -> Check:
     return Check("ok", name, detail)
 
 
-def _mealie(adapters: Adapters, settings: Settings, workspace: Path | None = None) -> list[Check]:
+def _mealie(
+    adapters: Adapters,
+    settings: Settings,
+    workspace: Path | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> list[Check]:
     mealie = adapters.mealie
     if not settings.mealie_url or not settings.mealie_token:
         missing = [
@@ -140,6 +166,7 @@ def _mealie(adapters: Adapters, settings: Settings, workspace: Path | None = Non
         ]
 
     reach = f"Mealie reachable at {settings.mealie_url}"
+    started = clock()
     try:
         version = mealie.about().version
     except MealieUnreachableError as err:
@@ -154,7 +181,10 @@ def _mealie(adapters: Adapters, settings: Settings, workspace: Path | None = Non
             Check("skip", "Mealie token", "needs Mealie to be reachable"),
             Check("skip", "Mealie catalog", "needs Mealie to be reachable"),
         ]
-    checks = [Check("ok", reach, version)]
+    elapsed = clock() - started
+    slow = elapsed > settings.mealie.timeout_seconds / 2
+    detail = f"{version}, answered in {elapsed:.2f} s" + (" (slow)" if slow else "")
+    checks = [Check("warn" if slow else "ok", reach, detail)]
 
     try:
         me = mealie.whoami()

@@ -39,3 +39,8 @@ collections.json
 your_saved_items.json
 /*.csv
 *.csv.csv
+
+# deploy (ticket 31): secrets and exports next to the compose file
+deploy/.env
+deploy/imports/*
+!deploy/imports/.gitkeep

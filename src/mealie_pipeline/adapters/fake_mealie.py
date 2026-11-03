@@ -126,12 +126,14 @@ class FakeMealie:
         return [{k: r.get(k) for k in keys} for r in self.recipes.values()]
 
     def create_recipe(self, name: str) -> str:
+        """Like Mealie: a taken name is created as "Name (1)", "Name (2)", ... (slug `name-1`)."""
         self._auth("POST", "/api/recipes")
-        base = slugify(name) or "recipe"
-        slug, n = base, 0
+        original, n = name, 0
+        slug = slugify(name) or "recipe"
         while slug in self.recipes:
             n += 1
-            slug = f"{base}-{n}"
+            name = f"{original} ({n})"
+            slug = slugify(name)
         self.recipes[slug] = {
             "id": str(uuid.uuid4()),
             "slug": slug,
@@ -162,7 +164,16 @@ class FakeMealie:
         for ingredient in payload.get("recipeIngredient") or []:
             self._check_reference("PATCH", path, "food", ingredient.get("food"), self.foods)
             self._check_reference("PATCH", path, "unit", ingredient.get("unit"), self.units)
+        # Mealie derives the slug from the name: a new name moves the recipe, onto a taken slug it fails.
+        new_slug = slugify(payload["name"]) if payload.get("name") else slug
+        if new_slug != slug and new_slug in self.recipes:
+            raise MealieHttpError("PATCH", path, 400, '{"detail":{"message":"Recipe already exists"}}')
         recipe.update(copy.deepcopy(payload))
+        if new_slug != slug:
+            recipe["slug"] = new_slug
+            self.recipes[new_slug] = self.recipes.pop(slug)
+            if slug in self.images:
+                self.images[new_slug] = self.images.pop(slug)
         return copy.deepcopy(recipe)
 
     def _check_reference(

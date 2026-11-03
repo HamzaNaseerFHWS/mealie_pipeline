@@ -24,6 +24,7 @@ from mealie_pipeline.classify import (
 from mealie_pipeline.collect import sync_lists
 from mealie_pipeline.doctor import exit_code, render, run_doctor
 from mealie_pipeline.find import SitePolicy
+from mealie_pipeline.inbox_worker import CycleReport, HttpInboxClient, InboxClient, InboxWorker
 from mealie_pipeline.login import run_login
 from mealie_pipeline.pipeline import STAGES, Pipeline, RunReport
 from mealie_pipeline.protein import ProteinRules
@@ -36,10 +37,19 @@ from mealie_pipeline.request_sheet import SheetError, read_sheet
 from mealie_pipeline.sessions import load_platforms
 from mealie_pipeline.settings import Settings, load_settings
 from mealie_pipeline.store import StateStore
+from mealie_pipeline.subtitle_queue import requeue
 from mealie_pipeline.url_normalizer import normalize, normalize_list
 
 LOGIN_POLL_SECONDS = 2.0  # how often `mp login` looks for the session cookies
 REQUEST_STAGES = ("find",)  # stages of Recipe Requests, run with `mp run --stages find`
+MEALIE_UNREACHABLE_EXIT = 3  # the driver scripts wait and run again on this code
+
+
+def _http_inbox(url: str, token: str, timeout: float) -> InboxClient:
+    return HttpInboxClient(url, token, timeout=timeout)
+
+
+INBOX_CLIENT_FACTORY = _http_inbox  # tests swap in a fake
 
 app = typer.Typer(
     help="Turn saved cooking videos into parsed, tagged recipes in Mealie.", no_args_is_help=True
@@ -356,6 +366,10 @@ def run(
     if report.stopped:
         typer.echo(report.stopped)
     _print_request_summary(pipeline, app_ctx.workspace)
+    if report.mealie_unreachable:
+        typer.echo(report.mealie_unreachable)
+        typer.echo("The steps that need Mealie wait; run again once Mealie answers.")
+        raise typer.Exit(MEALIE_UNREACHABLE_EXIT)
     raise typer.Exit(1 if report.failed or report.stopped or find_failed else 0)
 
 
@@ -478,6 +492,78 @@ def retry(
         stage = min(failed, key=STAGES.index)
     removed = store.reset_stages(_stages_from(stage), keys=[key])
     typer.echo(f"{key}: reset from {stage} ({removed} stage records). Run `mp run` to process it.")
+
+
+@app.command("inbox-worker")
+def inbox_worker(
+    ctx: typer.Context,
+    once: Annotated[bool, typer.Option("--once", help="One cycle, then exit (for a test or cron).")] = False,
+) -> None:
+    """Take links from the Telegram inbox bot through the pipeline and report back (ticket 33).
+
+    Runs until stopped (SIGTERM from `docker compose stop`, or Ctrl+C): the item in progress
+    finishes first, and whatever is left waits for the next start."""
+    app_ctx: AppContext = ctx.obj
+    cfg = app_ctx.settings.inbox
+    if not cfg.url or not cfg.token:
+        typer.echo("INBOX_URL and INBOX_API_TOKEN must be set (deploy/.env or .env)")
+        raise typer.Exit(2)
+    client = INBOX_CLIENT_FACTORY(cfg.url, cfg.token.get_secret_value(), cfg.timeout_seconds)
+    worker = InboxWorker(
+        _open_pipeline(app_ctx),
+        client,
+        expand=app_ctx.adapters.web.expand,
+        list_key=cfg.list_key,
+        workers=app_ctx.settings.run.workers,
+    )
+    stop = threading.Event()
+
+    def on_signal(signum, frame):  # noqa: ARG001
+        if not stop.is_set():
+            typer.echo("stopping after the current item...")
+        stop.set()
+
+    previous = {sig: signal.signal(sig, on_signal) for sig in (signal.SIGINT, signal.SIGTERM)}
+
+    def show(report: CycleReport) -> None:
+        for line in report.reported:
+            typer.echo(f"reported {line}")
+        for line in report.problems:
+            typer.echo(f"waiting: {line}")
+        if report.stopped:
+            typer.echo(f"waiting: {report.stopped}")
+        if report.received or report.waiting:
+            typer.echo(f"inbox: {report.received} new, {report.waiting} still on their way")
+
+    try:
+        if once:
+            show(worker.cycle(stop.is_set))
+        else:
+            typer.echo(f"inbox worker: asking {cfg.url} every {cfg.poll_seconds:g} s")
+            worker.loop(cfg.poll_seconds, stop.is_set, on_cycle=show)
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    typer.echo("inbox worker stopped")
+
+
+@app.command("requeue-subtitles")
+def requeue_subtitles(
+    ctx: typer.Context,
+    status_csv: Annotated[
+        Path | None,
+        typer.Option(
+            "--csv", help="Status sheet with needs_transcription rows (default reports/youtube_status.csv)."
+        ),
+    ] = None,
+) -> None:
+    """Send Videos that had no text back through scrape: their subtitles are read now (ticket 34)."""
+    app_ctx: AppContext = ctx.obj
+    path = status_csv or app_ctx.workspace / "reports" / "youtube_status.csv"
+    keys = requeue(_open_pipeline(app_ctx).store, app_ctx.workspace, path)
+    for key in keys:
+        typer.echo(f"requeued {key}")
+    typer.echo(f"{len(keys)} Videos requeued. Run `mp run` to read their subtitles.")
 
 
 @app.command()

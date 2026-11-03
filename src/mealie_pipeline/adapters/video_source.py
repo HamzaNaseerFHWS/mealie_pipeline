@@ -1,6 +1,7 @@
 """The VideoSource port: yt-dlp as a library. `metadata`, `pinned_comments`, `subtitles` and
 `list_playlist`."""
 
+import html
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -128,25 +129,52 @@ def pick_subtitle_track(info: dict[str, Any]) -> str | None:
 
 
 def vtt_text(vtt: str) -> str:
-    """Plain text of a WebVTT file: no header, cue timings or tags, no repeated lines."""
+    """Plain text of a WebVTT (or SRT) file: no header, cue numbers, timings or tags, and no repeats.
+
+    YouTube's automatic captions roll: each cue repeats the line before it and adds a few words, so
+    a line that an earlier one already holds, or that only extends the line before, is merged."""
     lines: list[str] = []
     for raw in vtt.splitlines():
-        line = re.sub(r"<[^>]+>", "", raw).strip()
-        if not line or line == "WEBVTT" or "-->" in line or re.match(r"^(Kind|Language|NOTE)\b", line):
+        line = html.unescape(re.sub(r"<[^>]+>", "", raw)).replace("\u00a0", " ")
+        line = re.sub(r"\[(?:music|applause|laughter|musik|♪)[^\]]*\]|♪", " ", line, flags=re.IGNORECASE)
+        line = " ".join(line.split())
+        if not line or line == "WEBVTT" or "-->" in line or line.isdigit():
             continue
-        if not lines or lines[-1] != line:
-            lines.append(line)
+        if re.match(r"^(Kind|Language|NOTE|STYLE|REGION)\b", line):
+            continue
+        if lines and (line == lines[-1] or line in lines[-3:]):
+            continue
+        if lines and line.startswith(lines[-1]):  # the rolling cue grew: keep the longer line
+            lines[-1] = line
+            continue
+        if lines and lines[-1].endswith(line):
+            continue
+        lines.append(line)
     return "\n".join(lines)
 
 
 class YtDlpVideoSource:
+    """`cookiefile`: the `secrets/cookies.txt` of `mp login` (or one copied into the container). It is
+    sent with every request while the file exists, so Instagram and Facebook posts that need a login
+    can be read; without it, public posts still work."""
+
+    def __init__(self, cookiefile: Path | None = None):
+        self.cookiefile = cookiefile
+
+    def _options(self, **options: Any) -> dict[str, Any]:
+        if self.cookiefile is not None and self.cookiefile.is_file():
+            options["cookiefile"] = str(self.cookiefile)
+        return options
+
     def frame(self, url: str, at_s: float, dest: Path) -> Path | None:
         import subprocess
 
         import yt_dlp
         from yt_dlp.utils import DownloadError
 
-        options = {"quiet": True, "no_warnings": True, "noplaylist": True, "format": "best[height<=720]/best"}
+        options = self._options(
+            quiet=True, no_warnings=True, noplaylist=True, format="best[height<=720]/best"
+        )
         try:
             with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[arg-type]
                 info = ydl.extract_info(url, download=False)
@@ -167,11 +195,13 @@ class YtDlpVideoSource:
         import yt_dlp  # imported lazily: it is slow to import and not needed by most tests
         from yt_dlp.utils import DownloadError
 
-        options = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}
+        options = self._options(quiet=True, no_warnings=True, skip_download=True, noplaylist=True)
         try:
             with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[arg-type]
                 info = ydl.extract_info(url, download=False)
         except DownloadError as err:
+            if is_login_error(str(err)):
+                raise LoginRequired(f"login needed (refresh secrets/cookies.txt): {err}") from err
             raise VideoSourceError(str(err)) from err
         if not isinstance(info, dict):
             raise VideoSourceError(f"yt-dlp returned nothing for {url}")
@@ -180,14 +210,14 @@ class YtDlpVideoSource:
     def pinned_comments(self, url: str) -> str:
         import yt_dlp
 
-        options = {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "noplaylist": True,
-            "getcomments": True,
-            "extractor_args": {"youtube": {"max_comments": ["20", "0", "0", "0"], "comment_sort": ["top"]}},
-        }
+        options = self._options(
+            quiet=True,
+            no_warnings=True,
+            skip_download=True,
+            noplaylist=True,
+            getcomments=True,
+            extractor_args={"youtube": {"max_comments": ["20", "0", "0", "0"], "comment_sort": ["top"]}},
+        )
         try:
             with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[arg-type]
                 info = ydl.extract_info(url, download=False)
@@ -202,7 +232,7 @@ class YtDlpVideoSource:
         import yt_dlp
         from yt_dlp.utils import DownloadError
 
-        options = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}
+        options = self._options(quiet=True, no_warnings=True, skip_download=True, noplaylist=True)
         try:
             with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[arg-type]
                 info = ydl.extract_info(url, download=False)

@@ -271,6 +271,7 @@ def test_reset_extract_then_run_in_update_mode_patches_the_same_recipe(world: Wo
     world.invoke("add", URL)
     world.invoke("run")
     slug = next(iter(world.mealie.recipes))
+    recipe_id = world.mealie.recipes[slug]["id"]
     improved = load("llm_extract_okra.json")
     improved["name"] = "Bhindi Aloo, improved"
     world.llm = recipe_llm()
@@ -284,9 +285,13 @@ def test_reset_extract_then_run_in_update_mode_patches_the_same_recipe(world: Wo
     updated = world.invoke("run", "--mode", "update")
 
     assert updated.exit_code == 0, updated.output
-    assert list(world.mealie.recipes) == [slug]  # still one recipe, same slug
-    assert world.mealie.recipes[slug]["name"] == "Bhindi Aloo, improved"
-    assert len(world.mealie.recipes[slug]["recipeIngredient"]) == 5
+    # Still one recipe, PATCHed in place (same id). Mealie derives the slug from the name, so the
+    # renamed recipe has a new slug, and the store follows it.
+    [(new_slug, recipe)] = world.mealie.recipes.items()
+    assert recipe["id"] == recipe_id
+    assert recipe["name"] == "Bhindi Aloo, improved"
+    assert len(recipe["recipeIngredient"]) == 5
+    assert world.store().part(ITEM_KEY).slug == new_slug
 
 
 def test_reset_failed_only_leaves_finished_items_alone(three):
@@ -335,7 +340,7 @@ def test_report_has_one_row_per_recipe_part_and_one_per_video_without_parts(thre
         "outline_status",
         "extract_status",
         "parse_status",
-        "tag_status", "verify_status", "upload_status", "score", "outcome", "failed_checks",
+        "tag_status", "verify_status", "upload_status", "recipe_kind", "score", "outcome", "failed_checks",
         "extraction_attempts", "failure_reason", "mealie_slug", "mealie_url", "created_foods",
         "tags", "warnings", "lines_agreed", "lines_nlp_preferred", "lines_conflict", "lines_unparsed",
         "suspicious_lines",

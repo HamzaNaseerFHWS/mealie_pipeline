@@ -1,0 +1,56 @@
+# The `pipeline` service: `mp inbox-worker` with everything the laptop has under .tools/
+# (ffmpeg, yt-dlp, the Claude Code CLI, NLTK data, Chrome for the rendered pages). No GPU.
+# Build from the repository root: docker compose -f deploy/compose.yml build
+FROM python:3.12-slim-bookworm
+
+# Google Chrome for Playwright (link-in-bio pages, pages that need JavaScript). About 350 MB;
+# build with --build-arg WITH_CHROME=false to leave it out (those pages are then reported, not read).
+ARG WITH_CHROME=true
+# The Claude Code release channel of the native installer: stable or latest (or a version number).
+ARG CLAUDE_VERSION=stable
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    NLTK_DATA=/usr/share/nltk_data \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    CLAUDE_CONFIG_DIR=/home/mp/.claude \
+    DISABLE_AUTOUPDATER=1 \
+    PATH=/opt/venv/bin:/home/mp/.local/bin:$PATH
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg tini \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uv==0.11.32
+
+RUN useradd --create-home --uid 1000 --shell /bin/bash mp
+
+WORKDIR /app
+# Dependencies first, so a code change does not reinstall them.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+COPY src ./src
+COPY config ./config
+COPY prompts ./prompts
+RUN uv sync --frozen --no-dev
+
+# The tagger the ingredient parser needs (what .tools/ holds on the laptop); the build fails without it.
+RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng', download_dir='/usr/share/nltk_data', quiet=True); nltk.data.find('taggers/averaged_perceptron_tagger_eng')"
+RUN if [ "$WITH_CHROME" = "true" ]; then playwright install --with-deps chrome; fi
+
+COPY deploy/entrypoint.sh /usr/local/bin/mp-entrypoint
+RUN chmod 755 /usr/local/bin/mp-entrypoint \
+    && mkdir -p /workspace /home/mp/.claude \
+    && chown -R mp:mp /workspace /home/mp
+
+USER mp
+# The native installer puts `claude` in ~/.local/bin. The login itself lives in the claude-login
+# volume (CLAUDE_CONFIG_DIR) or comes from CLAUDE_CODE_OAUTH_TOKEN: never in the image.
+RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_VERSION" && claude --version
+
+WORKDIR /workspace
+ENTRYPOINT ["tini", "--", "mp-entrypoint"]
+CMD ["mp", "inbox-worker"]

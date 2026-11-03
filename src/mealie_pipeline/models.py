@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-SourceKind = Literal["web", "desc", "cmt", "asr", "ocr"]
+SourceKind = Literal["web", "desc", "cmt", "sub", "asr", "ocr"]
 ParseStatus = Literal["agreed", "nlp_preferred", "conflict", "unparsed", "nlp_only"]
 
 

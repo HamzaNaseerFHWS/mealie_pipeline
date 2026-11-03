@@ -1,0 +1,63 @@
+# The recipe pipeline on the Mealie PC: a separate compose project. Mealie's own compose project is not
+# touched; the pipeline reaches Mealie only through its REST API and token.
+#
+#   cp deploy/.env.example deploy/.env      # fill it in
+#   docker compose -f deploy/compose.yml up -d --build
+#
+# See deploy/README.md.
+name: recipe-pipeline
+
+services:
+  inbox:
+    build: ../inbox_bot
+    restart: unless-stopped
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in deploy/.env}
+      INBOX_API_TOKEN: ${INBOX_API_TOKEN:?set INBOX_API_TOKEN in deploy/.env}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      INBOX_DB: /data/inbox.db
+    volumes:
+      - inbox-data:/data
+    # Not published: the pipeline reaches the bot by its service name. To reach the API from another
+    # machine over Tailscale only, uncomment and put in the PC's Tailscale address:
+    # ports:
+    #   - "100.x.y.z:8765:8765"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  pipeline:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.pipeline
+      args:
+        WITH_CHROME: ${WITH_CHROME:-true}
+    restart: unless-stopped
+    depends_on:
+      inbox:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # Mealie on the same PC, published on port 9000. From the laptop, set MEALIE_URL in deploy/.env
+      # to the Tailscale address instead (see deploy/README.md).
+      MEALIE_URL: ${MEALIE_URL:-http://host.docker.internal:9000}
+      INBOX_URL: http://inbox:8765
+      WEB__BROWSER_HEADLESS: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - pipeline-data:/workspace
+      - claude-login:/home/mp/.claude
+      - ./imports:/workspace/imports
+      - ./secrets:/workspace/secrets
+    # `docker compose stop` sends SIGTERM: the worker finishes the item in progress (an extraction can
+    # take a few minutes) before it stops.
+    stop_grace_period: 10m
+
+volumes:
+  inbox-data:
+  pipeline-data:
+  claude-login:

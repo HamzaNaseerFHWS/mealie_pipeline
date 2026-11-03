@@ -40,7 +40,7 @@ class Adapters:
 def build_adapters(settings: Settings, workspace: Path) -> Adapters:
     token = settings.mealie_token.get_secret_value() if settings.mealie_token else ""
     claude_slots = threading.BoundedSemaphore(settings.llm.max_parallel)  # shared by every claude call
-    videos = YtDlpVideoSource()
+    videos = YtDlpVideoSource(cookiefile=cookies_file(workspace))
     return Adapters(
         mealie=MealieHttpGateway(
             settings.mealie_url or "",
@@ -48,6 +48,7 @@ def build_adapters(settings: Settings, workspace: Path) -> Adapters:
             timeout=settings.mealie.timeout_seconds,
             max_retries=settings.mealie.max_retries,
             backoff=settings.mealie.backoff_seconds,
+            deadline=settings.mealie.deadline_seconds,
         ),
         system=RealSystemProbe(),
         llm=ClaudeCliBackend(
@@ -76,5 +77,5 @@ def build_adapters(settings: Settings, workspace: Path) -> Adapters:
             slots=claude_slots,
         ),
         collectors={"youtube": YouTubeCollector(videos, cookiefile=cookies_file(workspace))},
-        browser=PlaywrightBrowser(profile_dir(workspace)),
+        browser=PlaywrightBrowser(profile_dir(workspace), headless=settings.web.browser_headless),
     )

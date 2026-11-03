@@ -58,7 +58,11 @@ def evaluate(
     sources: dict[str, str],
     known_foods: list[str],
     cfg: VerifySettings,
+    *,
+    partial: bool = False,
 ) -> Evaluation:
+    """`partial`: an ingredients-only recipe (ticket 39). It needs no steps, and S2 (ingredients used
+    in steps) does not apply; ungrounded ingredients still fail it."""
     bad_ingredients = grounding.ungrounded_ingredients(recipe.ingredients, sources, cfg.grounding_threshold)
     bad_steps = grounding.ungrounded_steps(recipe.instructions, sources, cfg.grounding_threshold)
     total = len(recipe.ingredients)
@@ -87,7 +91,8 @@ def evaluate(
             else "not a recipe or no name",
         )
     )
-    enough = len(kept_recipe.ingredients) >= 2 and len(recipe.instructions) >= 1
+    min_steps = 0 if partial else 1
+    enough = len(kept_recipe.ingredients) >= 2 and len(recipe.instructions) >= min_steps
     add(
         CheckResult(
             "H2",
@@ -95,7 +100,7 @@ def evaluate(
             enough,
             None,
             f"{len(kept_recipe.ingredients)} ingredients and {len(recipe.instructions)} steps"
-            + ("" if enough else " (needs at least 2 ingredients and 1 step)"),
+            + ("" if enough else f" (needs at least 2 ingredients and {min_steps} step)"),
         )
     )
     h3_ok = dropped_fraction <= cfg.max_dropped_fraction and step_fraction <= cfg.max_dropped_fraction
@@ -126,6 +131,8 @@ def evaluate(
     s6, s6_details = checks.plausibility(
         recipe.servings, recipe.prep_minutes, recipe.cook_minutes, recipe.total_minutes
     )
+    if partial:
+        s2, s2_details = None, "ingredients-only recipe: no steps to check against"
     soft = [
         ("S1", None, "no website Source yet"),
         ("S2", s2, s2_details),

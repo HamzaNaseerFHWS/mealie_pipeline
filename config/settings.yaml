@@ -4,11 +4,14 @@
 
 mealie:
   # Seconds to wait for any single Mealie response.
-  timeout_seconds: 20
+  timeout_seconds: 60
   # Connection errors are retried this many times (after the first try) with exponential backoff.
   max_retries: 3
   # First backoff delay in seconds; doubles on every retry (1, 2, 4).
   backoff_seconds: 1.0
+  # The most one Mealie call may take, retries included. A silent Mealie then ends the run with
+  # "cannot reach Mealie at <url> after <n> s" and exit code 3 instead of hanging.
+  deadline_seconds: 120
 
 run:
   workers: 1          # items handled at the same time by find, scrape and extract (`mp run --workers N`)

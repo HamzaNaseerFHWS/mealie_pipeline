@@ -19,7 +19,7 @@ def test_defaults_come_from_the_yaml_file(tmp_path):
 
 def test_missing_yaml_falls_back_to_built_in_defaults(tmp_path):
     settings = load_settings(tmp_path, environ={})
-    assert settings.mealie.timeout_seconds == 20
+    assert settings.mealie.timeout_seconds == 60
     assert settings.mealie.max_retries == 3
     assert settings.mealie_token is None
 

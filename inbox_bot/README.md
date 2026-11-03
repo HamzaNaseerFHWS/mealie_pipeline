@@ -35,3 +35,34 @@ All routes except `/health` need `Authorization: Bearer <INBOX_API_TOKEN>`.
 
 Port 8765 is published on all of the PC's interfaces. The token protects it. To make it reachable over
 Tailscale only, change the port line in `docker-compose.yml` to `"<tailscale-ip>:8765:8765"`.
+
+## The pipeline side: `mp inbox-worker`
+
+The `pipeline` container of `deploy/compose.yml` (or the laptop) runs `mp inbox-worker`. Every
+`inbox.poll_seconds` (default 60) it asks `GET /pending`, runs each new link through the pipeline and
+posts the result:
+
+| Result | When |
+|---|---|
+| `done` + Mealie link(s) | uploaded, already in Mealie, or a link-only stub; a multi-recipe video lists every recipe |
+| `not_recipe` + label | `classify` skipped it (`restaurant_or_place`, `not_food`, ...) |
+| `failed` + reason | download failed, the page held no single recipe, or held for review in the pipeline |
+
+A YouTube/Instagram/Facebook link becomes a Video of the Saved List `inbox:telegram`. Any other web
+link is read as a recipe page. A link stays "on its way" while Mealie is down or Claude's usage limit
+is hit, and is reported once it is through. Taken links are remembered in `data/inbox_items.json`, so a
+restart or an unreachable bot loses nothing, and a result is never posted twice.
+
+Settings (in `deploy/.env` or the pipeline's `.env`):
+
+| Variable | Meaning |
+|---|---|
+| `INBOX_URL` | the bot's API, e.g. `http://inbox:8765` inside the compose project |
+| `INBOX_API_TOKEN` | the same token the bot uses |
+| `INBOX__POLL_SECONDS` | seconds between two looks at the queue (default 60) |
+
+`mp inbox-worker --once` runs one cycle and exits. SIGTERM (`docker compose stop`) or Ctrl+C lets the
+item in progress finish, then stops.
+
+**Known limit:** the queue keeps one item per link. If two people send the same link, only the first
+sender gets the reply.

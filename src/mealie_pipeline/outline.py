@@ -13,10 +13,30 @@ Overlap = Literal["repair", "reject"]
 
 MATCH_AT = 60  # token-set ratio at which a part's title means a website recipe's name
 MAX_TITLE_WORDS = 8  # a numbered line longer than this is a method step, not a recipe heading
+# Words that number recipe headings: "Recipe 1", "Recipe #1", "Night 1", "Day 2", "Option 3", "Part 1",
+# "Meal 1", "Number 1", German "Rezept 1" and "Tag 1".
+HEADING_WORDS = r"recipe|rezept|night|day|option|part|meal|number|tag"
 _MARKER = re.compile(
-    r"^\s*(?:(\d{1,2})\s*[.)\]:]|(\d)️?⃣|#\s*(\d{1,2})\b|(?:recipe|rezept)\s*(\d{1,2})\b\s*[:.)-]?)",
+    r"^\s*(?:(\d{1,2})\s*[.)\]:]|(\d)️?⃣|#\s*(\d{1,2})\b"
+    rf"|(?:{HEADING_WORDS})\s*(?:#|no\.?|nr\.?)?\s*(\d{{1,2}})\b\s*[:.)-]?)",
     re.IGNORECASE,
 )
+# The title as a signal (ticket 36): "5 ways", "Japanese vs Korean", "meal prep", "freezer meals",
+# "recipes you need", or three or more dishes in a list.
+_TITLE_PATTERNS = [
+    ("meal_prep", re.compile(r"\bmeal[\s-]?prep\b", re.I)),
+    ("freezer_meals", re.compile(r"\bfreezer\s+(?:meals?|recipes?|friendly)\b", re.I)),
+    ("recipes_you_need", re.compile(r"\brecipes\s+you\s+(?:need|must|have)\b", re.I)),
+    ("versus", re.compile(r"\b(?:vs\.?|versus)(?=\s)", re.I)),
+    (
+        "n_ways",
+        re.compile(
+            r"\b\d+\s+(?:\w+\s+)?(?:ways|recipes|meals|dinners|lunches|breakfasts|dishes|ideas)\b", re.I
+        ),
+    ),
+]
+MAX_DISH_WORDS = 4  # a list item longer than this is a description, not a dish name
+_ONE_DISH_WORDS = {"with", "mit", "in", "on", "over", "served", "topped"}  # "Salmon with lemon, ..."
 
 
 class OutlineError(Exception):
@@ -47,7 +67,8 @@ def _heading_number(line: str) -> int | None:
         return None
     number = next(int(g) for g in match.groups() if g)
     title = line[match.end() :].strip()
-    if not title and not re.search(r"\d️?⃣", line):
+    worded = match.group(4) is not None  # "NIGHT 1" alone is a heading: the word names it
+    if not title and not worded and not re.search(r"\d️?⃣", line):
         return None
     if len(title.split()) > MAX_TITLE_WORDS or title.endswith((".", "!", "?")) or "," in title:
         return None  # a sentence: a method step
@@ -88,6 +109,24 @@ def _ingredient_like(line: str) -> bool:
     return len(line.split()) <= MAX_TITLE_WORDS and not line.rstrip().endswith(("!", "?"))
 
 
+def title_signal(title: str) -> str | None:
+    """Does the title promise several recipes? The name of the pattern that says so, else None.
+
+    "Pasta with Romanesco Broccoli and Spinach" is one dish: a list needs three or more short items
+    with at least two separators, one of them a comma."""
+    title = re.split(r"\s[|•]\s", title or "")[0]  # "Okra Fry | Your Food Lab"
+    for name, pattern in _TITLE_PATTERNS:
+        if pattern.search(title):
+            return name
+    listed = title.split(":", 1)[-1]
+    items = [i.strip() for i in re.split(r",|\s+(?:and|und|&|aur)\s+", listed, flags=re.I) if i.strip()]
+    short = all(len(i.split()) <= MAX_DISH_WORDS for i in items)
+    one_dish = any(set(i.casefold().split()) & _ONE_DISH_WORDS for i in items)
+    if listed.count(",") >= 1 and len(items) >= 3 and short and not one_dish:
+        return "dish_list"
+    return None
+
+
 def detect_signals(meta: VideoMeta, web_recipe_names: list[str]) -> list[str]:
     """Why this Video might hold several recipes; empty means one recipe and no outline call."""
     signals = []
@@ -99,7 +138,15 @@ def detect_signals(meta: VideoMeta, web_recipe_names: list[str]) -> list[str]:
     distinct = {re.sub(r"\W+", " ", n).strip().casefold() for n in web_recipe_names if n.strip()}
     if len(distinct) >= 2:
         signals.append(f"website_recipes:{len(distinct)}")
+    if (title := title_signal(meta.title)) is not None:
+        signals.append(f"title:{title}")
     return signals
+
+
+def only_title(signals: list[str]) -> bool:
+    """The title is the only sign of several recipes: there are no chapters, headings or website
+    recipes to split on."""
+    return bool(signals) and all(s.startswith("title:") for s in signals)
 
 
 def validate_outline(
