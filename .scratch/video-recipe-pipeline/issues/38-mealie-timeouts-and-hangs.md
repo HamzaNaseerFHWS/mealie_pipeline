@@ -9,7 +9,7 @@
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `adapters/mealie_http.py` (`_request`, `_items`), `pipeline.py` (`_already_in_mealie`, `_link_set`, `_classify`), `settings.py`.
 
