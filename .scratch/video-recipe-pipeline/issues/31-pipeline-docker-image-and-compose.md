@@ -10,7 +10,7 @@
 
 **Blocked by:** None for the build; ticket 32 decides whether `claude` works in the container, and ticket 33 supplies the worker command.
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `inbox_bot/README.md`, `inbox_bot/docker-compose.yml`, `inbox_bot/Dockerfile`, `.gitignore`, `src/mealie_pipeline/settings.py`.
 
