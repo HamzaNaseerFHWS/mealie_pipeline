@@ -36,7 +36,7 @@ from mealie_pipeline.classify import (
     write_classification_csv,
 )
 from mealie_pipeline.creators import CreatorRegistry, creator_handle
-from mealie_pipeline.errors import MealieError
+from mealie_pipeline.errors import MealieError, MealieUnreachableError
 from mealie_pipeline.existing_links import build_link_set
 from mealie_pipeline.find import single_recipe
 from mealie_pipeline.images import attach_image, candidate_urls
@@ -107,6 +107,10 @@ SIBLING_OF = "sibling_of:"  # a group member that had already gone on before `de
 # Stages that only read the web or call `claude` for one item at a time: they can use several workers.
 # parse, tag, verify and upload write to Mealie and its Catalog, so they always run one at a time.
 PARALLEL_STAGES = {"scrape", "extract"}
+# Stages that cannot work without Mealie. When Mealie does not answer they wait (their items stay
+# pending) while metadata, classify, scrape, outline and extract go on. `linkcheck` is re-done at upload.
+MEALIE_STAGES = {"parse", "tag", "verify", "upload"}
+TAG_CACHE = Path("data") / "mealie_tags.json"  # the tag names extract offers when Mealie is down
 WEB_STRUCTURED_RULE = (
     "The [SRC:web] block is the creator's own written recipe. Keep the website's quantities and wording "
     "and only fill gaps (missing times or servings) and merge in useful tips from the video description; "
@@ -133,6 +137,7 @@ class RunReport:
     upgraded_existing: list[str] = field(default_factory=list)
     dry_run_files: list[Path] = field(default_factory=list)
     stopped: str | None = None
+    mealie_unreachable: str | None = None  # Mealie did not answer: its stages waited (exit code 3)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def count(self, stage: str) -> None:
@@ -176,6 +181,7 @@ class Pipeline:
         self.mode = "skip"
         self.upgrade_existing = False
         self._links: dict[str, str] | None = None
+        self._mealie_down: MealieUnreachableError | None = None  # set by the first call Mealie missed
         units = workspace / "config" / "units.yaml"
         synonyms = yaml.safe_load(units.read_text(encoding="utf-8")) if units.is_file() else {}
         self.units = UnitNormalizer(synonyms or {})
@@ -214,7 +220,7 @@ class Pipeline:
         requests = RecipeRequests(self.store)
         register_found(self.store, requests)
         try:
-            return self._run(
+            report = self._run(
                 stages=stages,
                 limit=limit,
                 dry_run=dry_run,
@@ -224,6 +230,9 @@ class Pipeline:
                 workers=workers,
                 only_videos=only_videos,
             )
+            if self._mealie_down is not None:
+                report.mealie_unreachable = str(self._mealie_down)
+            return report
         finally:
             sync_outcomes(self.store, requests)
 
@@ -245,6 +254,7 @@ class Pipeline:
         then the run returns. Whatever was not reached stays pending for the next run.
         """
         report = RunReport()
+        self._mealie_down = None  # each run looks again
         self.mode = mode
         self.upgrade_existing = upgrade_existing
         wanted = stages or STAGES
@@ -298,6 +308,8 @@ class Pipeline:
                     key for key in batch if self._ready_to_extract(self.store.part(key).video_key, wanted)
                 ]
             todo = batch[:limit] if limit is not None else batch
+            if self._mealie_waits(stage, todo):
+                continue  # its items stay pending for the next run
             if stage == "classify":  # batched: many Videos per LLM call
                 if not self._classify(todo, report, should_stop):
                     return report
@@ -322,11 +334,22 @@ class Pipeline:
                 self.store.record(kind, key, stage, "running")
                 if not self._process(kind, key, stage, handlers[stage], report, dry_run):
                     return report
-            if stage == "upload" and not dry_run:
+                if self._mealie_down is not None and stage in MEALIE_STAGES:
+                    break  # the rest of this stage waits for Mealie too
+            if stage == "upload" and not dry_run and self._mealie_down is None:
                 self._link_siblings(report)
         if workers > 1:
             report.sort_lines()
         return report
+
+    def _mealie_waits(self, stage: str, todo: list[str]) -> bool:
+        """True when a Mealie stage must wait this run: Mealie did not answer (now or earlier)."""
+        if stage not in MEALIE_STAGES or not todo:
+            return False
+        if self._mealie_down is None:
+            with contextlib.suppress(MealieUnreachableError):
+                _ = self.catalog  # one quick look: is Mealie there at all?
+        return self._mealie_down is not None
 
     def _ready_to_extract(self, video_key: str, wanted: list[str]) -> bool:
         if self.store.stage_status("video", video_key, "scrape") != "done":
@@ -351,6 +374,9 @@ class Pipeline:
             self.store.record(kind, key, stage, "pending", str(err))
             report.stopped = f"Claude usage limit reached: {err}. Run again after it resets."
             return False
+        except MealieUnreachableError as err:  # not the item's fault: it waits for the next run
+            self._note_mealie_down(err)
+            self.store.record(kind, key, stage, "pending", str(err))
         except AlreadyInMealie as err:
             link = self.a.mealie.recipe_url(err.slug)
             self.store.update_part(key, mealie_url=link)
@@ -423,8 +449,35 @@ class Pipeline:
     def catalog(self) -> Catalog:
         with self._catalog_lock:
             if self._catalog is None:
-                self._catalog = self.a.mealie.catalog()
+                if self._mealie_down is not None:
+                    raise self._mealie_down
+                try:
+                    self._catalog = self.a.mealie.catalog()
+                except MealieUnreachableError as err:
+                    self._note_mealie_down(err)
+                    raise
+                self._save_tag_cache([t.name for t in self._catalog.tags])
             return self._catalog
+
+    def _note_mealie_down(self, err: MealieUnreachableError) -> None:
+        if self._mealie_down is None:
+            self._mealie_down = err
+
+    def _save_tag_cache(self, names: list[str]) -> None:
+        path = self.workspace / TAG_CACHE
+        with contextlib.suppress(OSError):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(sorted(names), ensure_ascii=False), encoding="utf-8")
+
+    def _allowed_tags(self) -> list[str]:
+        """The tag names extract may choose from: Mealie's, or the last ones seen when Mealie is down."""
+        try:
+            return sorted(t.name for t in self.catalog.tags)
+        except MealieUnreachableError:
+            path = self.workspace / TAG_CACHE
+            if not path.is_file():
+                raise  # never seen Mealie's tags: extract waits for Mealie as well
+            return sorted(json.loads(path.read_text(encoding="utf-8")))
 
     # -- stages ---------------------------------------------------------------------------
 
@@ -785,7 +838,13 @@ class Pipeline:
     def _link_set(self) -> dict[str, str]:
         """The Existing Link Set: `key -> slug` for every recipe in Mealie that has an `orgURL`."""
         if self._links is None:
-            self._links = build_link_set(self.a.mealie.list_recipe_summaries())
+            if self._mealie_down is not None:
+                raise self._mealie_down
+            try:
+                self._links = build_link_set(self.a.mealie.list_recipe_summaries())
+            except MealieUnreachableError as err:
+                self._note_mealie_down(err)
+                raise
         return self._links
 
     def _link_key(self, video_key: str) -> str:
@@ -809,8 +868,14 @@ class Pipeline:
         return slug if slug and slug != part.slug and slug not in mine else None
 
     def _linkcheck(self, item_key: str, report: RunReport, dry_run: bool) -> None:
-        """Before any paid work: a Video whose link is already in Mealie is skipped (link = identity)."""
-        slug = self._foreign_recipe(item_key)
+        """Before any paid work: a Video whose link is already in Mealie is skipped (link = identity).
+
+        With Mealie down the check is left to `upload`, which repeats it, so the work can go on."""
+        try:
+            slug = self._foreign_recipe(item_key)
+        except MealieUnreachableError:
+            self._detail[item_key] = "not checked (Mealie unreachable): upload checks again"
+            return
         if slug is None:
             return
         if not self.upgrade_existing:
@@ -849,7 +914,7 @@ class Pipeline:
         sources = self._sources(item_key)
         if not sources["desc"].strip() and web is None:
             raise StageFailure("the video has no description or website recipe to extract from")
-        tags = sorted(t.name for t in self.catalog.tags)
+        tags = self._allowed_tags()
         prompt = (
             f"Title: {meta.title}\nUploader: {meta.uploader}\nURL: {video.canonical_url}\n\n"
             f"Allowed tag names: {json.dumps(tags, ensure_ascii=False)}\n\n"

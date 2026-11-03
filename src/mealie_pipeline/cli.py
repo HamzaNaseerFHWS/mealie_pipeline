@@ -40,6 +40,7 @@ from mealie_pipeline.url_normalizer import normalize, normalize_list
 
 LOGIN_POLL_SECONDS = 2.0  # how often `mp login` looks for the session cookies
 REQUEST_STAGES = ("find",)  # stages of Recipe Requests, run with `mp run --stages find`
+MEALIE_UNREACHABLE_EXIT = 3  # the driver scripts wait and run again on this code
 
 app = typer.Typer(
     help="Turn saved cooking videos into parsed, tagged recipes in Mealie.", no_args_is_help=True
@@ -356,6 +357,10 @@ def run(
     if report.stopped:
         typer.echo(report.stopped)
     _print_request_summary(pipeline, app_ctx.workspace)
+    if report.mealie_unreachable:
+        typer.echo(report.mealie_unreachable)
+        typer.echo("The steps that need Mealie wait; run again once Mealie answers.")
+        raise typer.Exit(MEALIE_UNREACHABLE_EXIT)
     raise typer.Exit(1 if report.failed or report.stopped or find_failed else 0)
 
 

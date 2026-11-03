@@ -25,13 +25,18 @@ class MealieHttpGateway:
         base_url: str,
         token: str,
         *,
-        timeout: float = 20.0,
+        timeout: float = 60.0,
         max_retries: int = 3,
         backoff: float = 1.0,
+        deadline: float | None = 120.0,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self.base_url = base_url.rstrip("/")
         self._token = token
+        self._timeout = timeout
+        self._deadline = deadline
+        self._clock = clock
         self._max_retries = max_retries
         self._backoff = backoff
         self._sleep = sleep
@@ -45,33 +50,54 @@ class MealieHttpGateway:
     # -- transport ------------------------------------------------------------------------
 
     def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        """Sends a request, retrying connection errors with backoff; raises typed errors."""
+        """Sends a request, retrying connection errors with backoff; raises typed errors.
+
+        No call takes longer than the deadline, retries and waits included: a Mealie that never
+        answers ends in `MealieUnreachableError("... after <n> s")` instead of hanging the run."""
         last: httpx.TransportError | None = None
+        started = self._clock()
+
+        def remaining() -> float | None:
+            return None if self._deadline is None else self._deadline - (self._clock() - started)
+
+        def give_up(detail: str) -> MealieUnreachableError:
+            waited = self._clock() - started if self._deadline is not None else None
+            return MealieUnreachableError(self.base_url, detail, after_s=waited)
+
         for attempt in range(self._max_retries + 1):
+            left = remaining()
+            if left is not None and left <= 0:
+                raise give_up(redact(str(last), self._token)) from last
+            timeout = self._timeout if left is None else max(0.001, min(self._timeout, left))
             try:
-                response = self._client.request(method, path, **kwargs)
+                response = self._client.request(method, path, timeout=timeout, **kwargs)
                 break
             except (httpx.ConnectError, httpx.ConnectTimeout) as err:
                 last = err
                 if attempt < self._max_retries:
-                    self._sleep(self._backoff * 2**attempt)
+                    self._wait(self._backoff * 2**attempt, remaining())
             except httpx.TimeoutException as err:
                 # Mealie took the request but never answered. A read is safe to ask again; a write may have
                 # gone through, so it is not repeated (uploads find their recipe by link on the next run).
                 last = err
                 if method != "GET":
-                    raise MealieUnreachableError(
-                        self.base_url, f"no answer: {redact(str(err), self._token)}"
-                    ) from err
+                    raise give_up(f"no answer: {redact(str(err), self._token)}") from err
                 if attempt < self._max_retries:
-                    self._sleep(self._backoff * 2**attempt)
+                    self._wait(self._backoff * 2**attempt, remaining())
         else:
-            raise MealieUnreachableError(self.base_url, redact(str(last), self._token)) from last
+            raise give_up(redact(str(last), self._token)) from last
         if response.is_success:
             return response
         if response.status_code == 401:
             raise MealieAuthError(method, path, 401, response.text, self._token)
         raise MealieHttpError(method, path, response.status_code, response.text, self._token)
+
+    def _wait(self, seconds: float, left: float | None) -> None:
+        """Backoff between attempts, never past the deadline."""
+        if left is not None:
+            seconds = min(seconds, max(0.0, left))
+        if seconds > 0:
+            self._sleep(seconds)
 
     def _items(self, path: str) -> list[dict[str, Any]]:
         return self._request("GET", path, params={"perPage": -1}).json()["items"]

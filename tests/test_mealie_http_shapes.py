@@ -1,6 +1,7 @@
 """MealieHttpGateway against a local server: exact HTTP shapes, errors, retries, token safety."""
 
 import json
+import re
 
 import httpx
 import pytest
@@ -165,7 +166,10 @@ def test_unreachable_server_retries_three_times_then_explains_tailscale():
         gw.about()
     assert len(attempts) == 4  # first try plus three retries
     assert sleeps == [0.5, 1.0, 2.0]
-    assert "cannot reach Mealie at http://mealie.invalid:9000: is Tailscale connected?" in str(err.value)
+    assert re.search(
+        r"cannot reach Mealie at http://mealie\.invalid:9000 after \d+ s: is Tailscale connected\?",
+        str(err.value),
+    )
 
 
 def test_a_read_timeout_on_a_read_is_retried_then_reported_as_unreachable_not_a_traceback():

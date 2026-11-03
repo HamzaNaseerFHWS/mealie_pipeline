@@ -16,9 +16,12 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 
 
 class MealieSettings(BaseModel):
-    timeout_seconds: float = 20
+    timeout_seconds: float = 60  # one HTTP attempt
     max_retries: int = 3
     backoff_seconds: float = 1.0
+    # The most one call may take, retries included: a silent Mealie ends the call with
+    # `cannot reach Mealie at <url> after <n> s` instead of hanging the run.
+    deadline_seconds: float = 120
 
 
 class RunSettings(BaseModel):

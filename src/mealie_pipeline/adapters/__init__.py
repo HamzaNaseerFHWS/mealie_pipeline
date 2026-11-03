@@ -48,6 +48,7 @@ def build_adapters(settings: Settings, workspace: Path) -> Adapters:
             timeout=settings.mealie.timeout_seconds,
             max_retries=settings.mealie.max_retries,
             backoff=settings.mealie.backoff_seconds,
+            deadline=settings.mealie.deadline_seconds,
         ),
         system=RealSystemProbe(),
         llm=ClaudeCliBackend(

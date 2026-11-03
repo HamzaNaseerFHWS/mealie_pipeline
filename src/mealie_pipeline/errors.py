@@ -39,10 +39,12 @@ class MealieAuthError(MealieHttpError):
 class MealieUnreachableError(MealieError):
     """DNS or connection failure after the retries were used up."""
 
-    def __init__(self, base_url: str, detail: str = ""):
+    def __init__(self, base_url: str, detail: str = "", *, after_s: float | None = None):
         self.base_url = base_url
+        self.after_s = after_s
         suffix = f" ({detail})" if detail else ""
-        super().__init__(f"cannot reach Mealie at {base_url}: is Tailscale connected?{suffix}")
+        waited = f" after {after_s:.0f} s" if after_s is not None else ""
+        super().__init__(f"cannot reach Mealie at {base_url}{waited}: is Tailscale connected?{suffix}")
 
 
 class NeedsHumanLogin(Exception):
