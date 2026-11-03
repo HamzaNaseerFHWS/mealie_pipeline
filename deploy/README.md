@@ -124,6 +124,32 @@ On Linux the container runs as uid 1000, so make the folders writable for it:
 sudo chown -R 1000:1000 deploy/secrets deploy/imports
 ```
 
+## Running on the Mealie PC from the registry (no build, no source)
+
+GitHub Actions (`.github/workflows/build-images.yml`) builds both images on every push to `main` that
+changes the code, and pushes them to GHCR as `ghcr.io/hamzanaseerfhws/mealie_pipeline-pipeline` and
+`...-inbox` (`:latest` and `:<commit>`). The Mealie PC only pulls them.
+
+**Once, on GitHub:** after the first workflow run, open the repo's *Packages*, and for each image check
+that it is **private** and that this repository has access. Create a personal access token (classic)
+with only the `read:packages` scope; that is what the Mealie PC logs in with.
+
+**On the Mealie PC** (Linux, Docker with Compose; nothing else to install):
+
+1. Make a folder, e.g. `~/recipe-pipeline`, and put two files in it: `deploy/compose.yml` (copy it as
+   `compose.yml`) and your `.env` (copy `deploy/.env.example`, fill it in; leave `MEALIE_URL` empty so the
+   default `http://host.docker.internal:9000` is used, and set `CLAUDE_CODE_OAUTH_TOKEN` from
+   `claude setup-token`). Create the two folders the compose file mounts: `mkdir secrets imports`.
+2. Log in to the registry once: `echo <token> | docker login ghcr.io -u <github-user> --password-stdin`.
+3. Start: `docker compose pull && docker compose up -d`.
+4. Check: `docker compose exec pipeline mp doctor`.
+
+**Update:** `docker compose pull && docker compose up -d`. To go back, set `PIPELINE_IMAGE` and
+`INBOX_IMAGE` in `.env` to an older `:<commit>` tag.
+
+Mealie's port 9000 must be published on the PC for `host.docker.internal` to reach it; if Mealie is only
+on a private Docker network, set `MEALIE_URL` to an address that works from outside it.
+
 ## Testing on the laptop
 
 The same compose file works on Docker Desktop for Windows. Two differences:
