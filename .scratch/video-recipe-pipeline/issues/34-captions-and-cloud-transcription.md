@@ -9,7 +9,7 @@ The cleaned text becomes a Source (`[SRC:sub]`) for the extract stage, with the 
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `src/mealie_pipeline/pipeline.py` (extract sources), `src/mealie_pipeline/adapters/video_source.py` (`subtitles` already exists from ticket 05), `reports/youtube_status.csv` (`needs_transcription`).
 
