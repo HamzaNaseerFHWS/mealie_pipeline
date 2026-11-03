@@ -45,7 +45,7 @@ packages = ["src/mealie_pipeline"]
 [tool.ruff]
 line-length = 110
 target-version = "py312"
-src = ["src", "tests"]
+src = ["src", "tests", "."]
 # Pre-existing standalone files (the stdlib fallback check and the original prototype) stay as they are.
 extend-exclude = ["scripts", "mealie_test.py", "PIPELINE_SPEC.md"]
 
@@ -53,7 +53,7 @@ extend-exclude = ["scripts", "mealie_test.py", "PIPELINE_SPEC.md"]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "inbox_bot"]
 typeCheckingMode = "basic"
 pythonVersion = "3.12"
 

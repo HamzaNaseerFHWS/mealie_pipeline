@@ -1,0 +1,10 @@
+services:
+  inbox-bot:
+    build: .
+    container_name: recipe-inbox-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+    ports:
+      - "8765:8765"
