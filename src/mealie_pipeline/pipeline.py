@@ -50,7 +50,7 @@ from mealie_pipeline.models import (
     extraction_schema,
 )
 from mealie_pipeline.name_clash import distinct_name, domain_of, find_clash, same_source, slug_of
-from mealie_pipeline.outline import OutlineError, detect_signals, segment, validate_outline
+from mealie_pipeline.outline import OutlineError, detect_signals, only_title, segment, validate_outline
 from mealie_pipeline.partial import (
     KIND_TAGS,
     RecipeKind,
@@ -818,6 +818,11 @@ class Pipeline:
         signals = detect_signals(meta, names)
         if not signals:
             return
+        nothing_to_split = "looks like several recipes, nothing to split on"
+        if only_title(signals):
+            texts = [v for k, v in self._video_sources(video_key).items() if k != "web"]
+            if web is None and not has_usable_text(texts):
+                return  # no text at all: one link-only stub (ticket 39), no outline call
         prompt = (
             f"Title: {meta.title}\nDuration: {meta.duration_s or 'unknown'} s\n"
             f"Signals: {', '.join(signals)}\n"
@@ -834,8 +839,12 @@ class Pipeline:
                 Outline.model_validate(raw), meta.duration_s, self.settings.outline.overlap
             )
         except OutlineError as err:
+            if only_title(signals):
+                raise NeedsReview(f"{nothing_to_split} (outline: {err})") from err
             raise NeedsReview(f"outline: {err}") from err
         if len(parts) < 2:
+            if only_title(signals):  # uploading it as one merged recipe is what this ticket stops
+                raise NeedsReview(f"{nothing_to_split} (title: {meta.title})")
             return
         slices: list[dict[str, Any] | None] = [asdict(s) for s in segment(parts, meta.description, names)]
         existing = self.store.video_parts(video_key)
@@ -1030,6 +1039,15 @@ class Pipeline:
         index = part.outline.get("web_index")
         return web.recipes[index] if index is not None and index < len(web.recipes) else None
 
+    def _video_sources(self, video_key: str) -> dict[str, str]:
+        """The Video's whole text Sources (description, pinned comment), not one part's slice."""
+        meta = VideoMeta.model_validate(self.store.video(video_key).metadata)
+        sources = {"desc": meta.description}
+        comment = self._web_path(video_key).with_name("comment.txt")
+        if comment.is_file():
+            sources["cmt"] = comment.read_text(encoding="utf-8")
+        return sources
+
     def _sources(self, item_key: str) -> dict[str, str]:
         """The Sources the Evidence may cite: the website recipe (`web`) and the description (`desc`).
         For a part of a multi-recipe Video that is only its own slice, plus the shared text."""
@@ -1197,6 +1215,9 @@ class Pipeline:
             self._upgrade_existing(item_key, foreign, payload)
 
         existing = mealie.find_recipe(item_key=item_key, org_url=payload.get("orgURL"))
+        other_part = (existing or {}).get("extras", {}).get("item_key")
+        if existing is not None and other_part and other_part != item_key:
+            existing = None  # a sibling part with the same link (no timestamps to tell them apart)
         if existing is not None and existing.get("recipeIngredient") and self.mode != "update":
             slug = str(existing["slug"])  # already uploaded earlier: record it, write nothing
             self.store.update_part(item_key, slug=slug, mealie_url=mealie.recipe_url(slug))
