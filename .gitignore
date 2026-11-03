@@ -29,3 +29,13 @@ dist/
 logs/
 pipeline.db.bak-*
 instagram_data/
+
+# personal exports and lists
+instagram_data/
+facebook-*/
+saved_posts.json
+saved_collections.json
+collections.json
+your_saved_items.json
+/*.csv
+*.csv.csv
