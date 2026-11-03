@@ -42,9 +42,9 @@ After Phase B, re-run the list's recipes so they pick up the better parsing and 
 23. `18-dedupe-and-existing-recipes`
 24. ~~`19-first-real-run-on-the-laptop`~~ (dropped: real runs already happen) (with the user)
 25. ~~`20-calibrate-the-classifier`~~ (dropped: classification already done)
-26. `21-full-run`
-27. `23-auto-sync-cycle`
-28. `24-schedule-auto-sync`
+26. ~~`21-full-run`~~ (dropped: Telegram inbox replaces it)
+27. ~~`23-auto-sync-cycle`~~ (dropped: Telegram inbox replaces it)
+28. ~~`24-schedule-auto-sync`~~ (dropped: Telegram inbox replaces it)
 
 ## Phase D: run it on the Mealie PC, and close the gaps found in the first real runs
 

@@ -4,7 +4,9 @@
 
 **Blocked by:** 10, 11, 12, 17, 18, 22
 
-**Status:** ready-for-agent
+**Status:** wontfix
+
+> Dropped: new recipes arrive one at a time through the Telegram inbox (ticket 33), so there is no full run or automatic sync.
 
 - [ ] `--all` batching and per-batch summaries are tested at the pipeline seam with fakes across 2 batches, including a usage-limit pause between them.
 - [ ] `report.html` is a single static file (no external assets), with a sortable table, filters by outcome, and links to Mealie and the review files.

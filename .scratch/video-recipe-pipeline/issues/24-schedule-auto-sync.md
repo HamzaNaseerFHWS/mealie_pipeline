@@ -4,7 +4,9 @@
 
 **Blocked by:** 23
 
-**Status:** ready-for-agent
+**Status:** wontfix
+
+> Dropped: new recipes arrive one at a time through the Telegram inbox (ticket 33), so there is no full run or automatic sync.
 
 **Read first:** `spec.md` user stories 58 and 61, module 17 and the `Scheduler` port in module 3; `README.md` / `RUNBOOK.md` from ticket 21.
 

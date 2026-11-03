@@ -4,7 +4,9 @@
 
 **Blocked by:** 21
 
-**Status:** ready-for-agent
+**Status:** wontfix
+
+> Dropped: new recipes arrive one at a time through the Telegram inbox (ticket 33), so there is no full run or automatic sync.
 
 **Read first:** `spec.md` user stories 56–63 and module 17; modules 1, 2, 3 (`ListCollector`, `Notifier`), 14 and 16. Also read tickets 04, 15 and 16 for the collectors' cursors and caps, and ticket 22 for the Existing Link Set.
 
