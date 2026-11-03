@@ -25,7 +25,7 @@ The user wants the recipes from their **CSV/Excel list of recipe names** in Meal
 10b. `30-german-food-aliases` (done): German food names become aliases of the English Foods; fixes the German recipes' low S2 score
 11. `25-protein-tags-for-every-recipe`: also backfills protein tags on everything already in Mealie
 12. `10-full-tagging`
-13. `13-claude-pro-usage-governor`: needs wayfinder 18. Move it earlier, right after 03, if the sheet has more than about 30 names, so a Pro usage limit pauses the run instead of failing items.
+13. ~~`13-claude-pro-usage-governor`~~ (dropped: videos run one at a time)
 
 After Phase B, re-run the list's recipes so they pick up the better parsing and tags: `mp reset parse` then `mp run --mode update`, as in ticket 03. Once wayfinder 20 (tag taxonomy) is decided, re-tag them the same way.
 
@@ -41,12 +41,10 @@ After Phase B, re-run the list's recipes so they pick up the better parsing and 
 22. ~~`16-facebook-saved-collector`~~ (dropped: ticket 35 export import) (needs wayfinder 16)
 23. `18-dedupe-and-existing-recipes`
 24. ~~`19-first-real-run-on-the-laptop`~~ (dropped: real runs already happen) (with the user)
-25. `20-calibrate-the-classifier` (with the user)
+25. ~~`20-calibrate-the-classifier`~~ (dropped: classification already done)
 26. `21-full-run`
 27. `23-auto-sync-cycle`
 28. `24-schedule-auto-sync`
-
-Research tickets (wayfinder 15–18) can run any time in parallel. They only write findings, and Phase C needs them.
 
 ## Phase D: run it on the Mealie PC, and close the gaps found in the first real runs
 
