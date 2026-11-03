@@ -4,7 +4,9 @@
 
 **Blocked by:** 14; wayfinder ticket `15-instagram-saved-enumeration.md` (read its Answer: endpoint patterns, pagination fields, stop signals, yt-dlp options; implement against those findings)
 
-**Status:** ready-for-agent
+**Status:** wontfix
+
+> Dropped: the Instagram saved posts come from the data export (ticket 35); no live collector.
 
 **Read first:** `spec.md` module 3 (`ListCollector`, `Browser`); `PIPELINE_SPEC.md` §3.1.
 

@@ -4,7 +4,9 @@
 
 **Blocked by:** 14; wayfinder ticket `16-facebook-saved-enumeration.md` (read its Answer and implement against it)
 
-**Status:** ready-for-agent
+**Status:** wontfix
+
+> Dropped: the Facebook saved items come from the data export (ticket 35); no live collector.
 
 **Read first:** `spec.md` modules 3 and 4; `PIPELINE_SPEC.md` §3.1.
 

@@ -1,7 +1,7 @@
 # 14: Which Saved List is the pilot, and which Videos are the first test cases?
 
 Type: task
-Status: open
+Status: resolved
 Blocked by: none
 Mode: HITL
 
@@ -17,4 +17,4 @@ Which Saved List do we run first, and which of its Videos should definitely be i
 
 ## Answer
 
-_pending_
+Not needed: real runs are already under way, so no pilot list.

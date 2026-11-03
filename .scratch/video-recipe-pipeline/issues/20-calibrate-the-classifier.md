@@ -7,7 +7,7 @@
 
 The commands are AFK work; the labelling and sign-off need the user.
 
-**Blocked by:** 05, 19
+**Blocked by:** 05
 
 **Status:** ready-for-human
 

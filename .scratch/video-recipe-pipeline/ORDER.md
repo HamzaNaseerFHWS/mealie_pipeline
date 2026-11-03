@@ -37,10 +37,10 @@ After Phase B, re-run the list's recipes so they pick up the better parsing and 
 18. `12-multi-recipe-videos`
 19. `14-pipeline-chrome-profile-and-login`
 20. `17-link-in-bio-and-creator-websites`
-21. `15-instagram-saved-collector` (needs wayfinder 15)
-22. `16-facebook-saved-collector` (needs wayfinder 16)
+21. ~~`15-instagram-saved-collector`~~ (dropped: ticket 35 export import) (needs wayfinder 15)
+22. ~~`16-facebook-saved-collector`~~ (dropped: ticket 35 export import) (needs wayfinder 16)
 23. `18-dedupe-and-existing-recipes`
-24. `19-first-real-run-on-the-laptop` (with the user)
+24. ~~`19-first-real-run-on-the-laptop`~~ (dropped: real runs already happen) (with the user)
 25. `20-calibrate-the-classifier` (with the user)
 26. `21-full-run`
 27. `23-auto-sync-cycle`

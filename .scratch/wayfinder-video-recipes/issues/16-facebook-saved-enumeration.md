@@ -1,7 +1,7 @@
 # 16: How does Facebook's saved-items page load, and what is the most robust way to enumerate saved videos and reels?
 
 Type: research
-Status: open
+Status: resolved
 Blocked by: none
 Mode: AFK
 
@@ -19,4 +19,4 @@ Find out and record:
 
 ## Answer
 
-_pending_
+Not needed: Facebook comes from the data export (ticket 35).

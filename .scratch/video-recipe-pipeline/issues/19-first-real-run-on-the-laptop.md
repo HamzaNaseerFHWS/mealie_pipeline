@@ -4,7 +4,9 @@
 
 **Blocked by:** 07, 13, 14, 22; wayfinder tickets `13-run-mealie-api-check.md` and `14-pilot-list.md`
 
-**Status:** ready-for-human
+**Status:** wontfix
+
+> Dropped: real runs have already been going on for a while, so there is no separate first run.
 
 - [ ] Install: Python 3.12, `uv`, ffmpeg (`winget install Gyan.FFmpeg`), Claude Code logged in with Pro, `uv sync`, `uv run playwright install chrome` if needed, the CUDA wheels per wayfinder 17.
 - [ ] `.env` filled in (`MEALIE_URL=http://mealie.taildce5a6.ts.net:9000`, `MEALIE_TOKEN`). `uv run mp doctor` is all green, and its output is pasted into Comments.

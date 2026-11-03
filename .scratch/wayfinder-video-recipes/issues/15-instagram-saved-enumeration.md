@@ -1,7 +1,7 @@
 # 15: How does Instagram's web app load the saved "All posts" grid, and what is the most robust way to enumerate it?
 
 Type: research
-Status: open
+Status: resolved
 Blocked by: none
 Mode: AFK
 
@@ -21,4 +21,4 @@ Sources to use: yt-dlp's Instagram extractor source and recent issues, Instaload
 
 ## Answer
 
-_pending: record findings here (endpoint patterns, field paths, stop signals, pacing), with links._
+Not needed: Instagram comes from the data export (ticket 35).
