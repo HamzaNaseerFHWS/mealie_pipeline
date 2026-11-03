@@ -36,7 +36,7 @@ from mealie_pipeline.classify import (
     write_classification_csv,
 )
 from mealie_pipeline.creators import CreatorRegistry, creator_handle
-from mealie_pipeline.errors import MealieError, MealieUnreachableError
+from mealie_pipeline.errors import MealieError, MealieHttpError, MealieUnreachableError
 from mealie_pipeline.existing_links import build_link_set
 from mealie_pipeline.find import single_recipe
 from mealie_pipeline.images import attach_image, candidate_urls
@@ -49,6 +49,7 @@ from mealie_pipeline.models import (
     VideoMeta,
     extraction_schema,
 )
+from mealie_pipeline.name_clash import distinct_name, domain_of, find_clash, same_source, slug_of
 from mealie_pipeline.outline import OutlineError, detect_signals, segment, validate_outline
 from mealie_pipeline.payload import build_payload
 from mealie_pipeline.protein import ProteinRules, RecipeText, detect, tag_key
@@ -181,6 +182,7 @@ class Pipeline:
         self.mode = "skip"
         self.upgrade_existing = False
         self._links: dict[str, str] | None = None
+        self._summaries: list[dict[str, Any]] = []  # the listing the Existing Link Set was built from
         self._mealie_down: MealieUnreachableError | None = None  # set by the first call Mealie missed
         units = workspace / "config" / "units.yaml"
         synonyms = yaml.safe_load(units.read_text(encoding="utf-8")) if units.is_file() else {}
@@ -841,7 +843,8 @@ class Pipeline:
             if self._mealie_down is not None:
                 raise self._mealie_down
             try:
-                self._links = build_link_set(self.a.mealie.list_recipe_summaries())
+                self._summaries = list(self.a.mealie.list_recipe_summaries())
+                self._links = build_link_set(self._summaries)
             except MealieUnreachableError as err:
                 self._note_mealie_down(err)
                 raise
@@ -1130,9 +1133,21 @@ class Pipeline:
             self.store.update_part(item_key, slug=slug, mealie_url=mealie.recipe_url(slug))
             report.uploaded.append(f"{item_key}: {mealie.recipe_url(slug)} (already in Mealie)")
             return
-        slug = (existing or {}).get("slug") or part.slug or mealie.create_recipe(recipe.name)
+        own = (existing or {}).get("slug") or part.slug
+        payload["name"] = self._free_name(item_key, payload, own, report)
+        slug = own or mealie.create_recipe(payload["name"])
         self.store.update_part(item_key, slug=slug)  # remembered before the PATCH so a crash can resume
-        mealie.patch_recipe(slug, payload)
+        # Mealie derives the slug from the name, so a renamed recipe comes back under a new slug.
+        try:
+            stored_after = mealie.patch_recipe(slug, payload)
+        except MealieHttpError as err:
+            if err.status != 400 or "already exists" not in err.body:
+                raise
+            self._links = None  # someone took the name since the listing: look again, once
+            payload["name"] = self._free_name(item_key, payload, slug, report)
+            stored_after = mealie.patch_recipe(slug, payload)
+        slug = str((stored_after or {}).get("slug") or slug)
+        self.store.update_part(item_key, slug=slug)
 
         meta = VideoMeta.model_validate(video.metadata)
         web = self._part_web(part)
@@ -1163,9 +1178,94 @@ class Pipeline:
         self._link_set()[self._link_key(part.video_key)] = (
             slug  # known at once, so a later item cannot repeat it
         )
+        self._summaries.append({"slug": slug, "name": payload["name"], "orgURL": payload.get("orgURL")})
         report.uploaded.append(f"{item_key}: {link}")
         report.warnings += [f"{item_key}: {w}" for w in warnings]
         self._uploaded_videos.add(part.video_key)
+
+    def _free_name(
+        self, item_key: str, payload: dict[str, Any], own_slug: str | None, report: RunReport
+    ) -> str:
+        """The name to upload under. A name another recipe already holds is either the same recipe
+        (its link is one of ours: skip) or a different one ("Name (Channel)"). Never overwrites."""
+        name = str(payload["name"])
+        self._link_set()  # makes sure the listing is there
+        part = self.store.part(item_key)
+        mine = {p.slug for p in self.store.video_parts(part.video_key) if p.slug}
+        if own_slug:
+            mine.add(own_slug)
+        clash = find_clash(name, self._summaries, mine)
+        if clash is None:
+            return name
+        video = self.store.video(part.video_key)
+        web = self._web(part.video_key)
+        own_urls = [video.canonical_url, payload.get("orgURL"), *((web.link, web.final_url) if web else ())]
+        row = {
+            "item_key": item_key,
+            "new_name": name,
+            "new_url": str(payload.get("orgURL") or video.canonical_url),
+            "existing_slug": clash.slug,
+            "existing_name": clash.name,
+            "existing_url": clash.org_url,
+        }
+        if same_source(clash.org_url, own_urls):
+            self._discard_shell(own_slug, item_key)
+            self._log_clash({**row, "decision": "same recipe: skipped", "uploaded_as": ""})
+            raise AlreadyInMealie(clash.slug)
+        meta = VideoMeta.model_validate(video.metadata) if video.metadata else None
+        qualifiers = [
+            creator_handle(meta) if meta else "",
+            meta.uploader if meta else "",
+            domain_of(web.final_url if web else video.canonical_url),
+            video.platform.capitalize(),
+        ]
+        taken = {str(s.get("slug") or "") for s in self._summaries} | {
+            slug_of(str(s.get("name") or "")) for s in self._summaries
+        }
+        taken -= mine
+        new_name = distinct_name(name, qualifiers, taken)
+        self._log_clash({**row, "decision": "different recipe: renamed", "uploaded_as": new_name})
+        report.warnings.append(
+            f"{item_key}: {clash.slug!r} already holds the name {name!r}; uploaded as {new_name!r}"
+        )
+        self._summaries.append({"slug": slug_of(new_name), "name": new_name, "orgURL": payload.get("orgURL")})
+        return new_name
+
+    def _discard_shell(self, slug: str | None, item_key: str) -> None:
+        """An empty recipe this item created on an earlier, failed upload ("Name (1)") is removed;
+        anything with content is left alone."""
+        if not slug:
+            return
+        with contextlib.suppress(MealieError):
+            recipe = self.a.mealie.get_recipe(slug)
+            if not recipe.get("recipeIngredient") and not recipe.get("recipeInstructions"):
+                self.a.mealie.delete_recipe(slug)
+                self.store.update_part(item_key, slug=None)
+
+    def _log_clash(self, row: dict[str, str]) -> None:
+        """`reports/upload_clashes.csv`: one row per item, the latest decision."""
+        path = self.workspace / "reports" / "upload_clashes.csv"
+        fields = [
+            "item_key",
+            "new_name",
+            "new_url",
+            "existing_slug",
+            "existing_name",
+            "existing_url",
+            "decision",
+            "uploaded_as",
+            "decided_at",
+        ]
+        rows: list[dict[str, str]] = []
+        if path.is_file():
+            with path.open(encoding="utf-8-sig", newline="") as handle:
+                rows = [r for r in csv.DictReader(handle) if r.get("item_key") != row["item_key"]]
+        rows.append({**row, "decided_at": self.now().isoformat(timespec="seconds")})
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(sorted(rows, key=lambda r: r["item_key"]))
 
     # -- dry run --------------------------------------------------------------------------
 
