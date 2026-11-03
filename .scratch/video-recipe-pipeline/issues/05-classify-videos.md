@@ -40,7 +40,7 @@ How it works:
 **Tests:** `tests/test_classify_signals.py`, `tests/test_classify_seam.py` (override, escalation, retry of missing/duplicated keys, batching, failure + retry, review with simulated input, Recipe Requests pass through); existing pipeline-seam tests updated for the new stage. `World.invoke` in `tests/test_pipeline_seam.py` now accepts `input=` for terminal prompts.
 
 **Deferred**
-- Transcript-based escalation: ticket 07.
+- Transcript-based escalation: dropped (ADR 0007).
 - Threshold/rule calibration on the real list: ticket 20.
 
 **Manual verification on the laptop**

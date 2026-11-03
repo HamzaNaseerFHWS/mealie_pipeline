@@ -4,7 +4,7 @@
 
 1. `_MARKER` in `outline.py` also accepts `Night 1`, `Day 1`, `Option 1`, `Part 1`, `Recipe #1`, `Meal 1`, `Number 1` headings (and German `Rezept 1`, `Tag 1`).
 2. A new signal from the **title**: `N ways`, `vs`, `meal prep`, `freezer meals`, `recipes you need`, or a title with 3+ dish names separated by commas or `and`. It triggers the outline call (one `strong` call).
-3. When the title signal fires but the outline finds no usable split (no chapters, no headings, no transcript), do **not** upload as one recipe: hold it for review with the reason "looks like several recipes, nothing to split on" (until ticket 34 gives a transcript to split with).
+3. When the title signal fires but the outline finds no usable split (no chapters, no headings, no transcript), do **not** upload as one recipe: hold it for review with the reason "looks like several recipes, nothing to split on" (subtitles from ticket 34 may later give something to split on). If the Video has no usable text at all, ticket 39's link-only stub applies instead.
 4. Re-processing: a command that resets the Videos listed in `reports/possible_merged.csv` so they are re-outlined. The user deletes the old merged recipes in Mealie.
 
 **Blocked by:** None

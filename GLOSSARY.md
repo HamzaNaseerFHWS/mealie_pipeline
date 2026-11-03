@@ -35,7 +35,7 @@ A label the user set by hand in the classification CSV. Always wins over the cla
 ## Sources and evidence
 
 **Source**:
-One piece of raw text about a Video, tagged with its kind: `web` (Recipe Website), `desc` (description/caption), `cmt` (creator's pinned comment), `asr` (our transcript), `ocr` (on-screen text).
+One piece of raw text about a Video, tagged with its kind: `web` (Recipe Website), `desc` (description/caption), `cmt` (creator's pinned comment), `sub` (existing subtitles), `ocr` (on-screen text).
 _Avoid_: input, document
 
 **Evidence**:

@@ -13,7 +13,7 @@
 - S1: website vs video agreement
 - S2: ingredients ↔ steps
 - S3: parse agreement (stub until ticket 09)
-- S4: transcript quality
+- S4: (dropped, ADR 0007; no transcripts)
 - S5: quantity sanity (stub until ticket 09)
 - S6: plausible times and servings
 - S7: LLM judge, only when the deterministic score is < 90

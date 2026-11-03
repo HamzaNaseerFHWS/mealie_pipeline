@@ -50,7 +50,6 @@ def test_all_green_lists_every_check_and_exits_zero(workspace, mealie, system):
         "[ OK ] claude CLI: logged in with a subscription (claude.ai)",
         "[ OK ] Playwright Chrome",
         "[ OK ] yt-dlp 2025.01.01",
-        "[ OK ] NVIDIA GPU: NVIDIA GeForce GTX 1650, 4096 MiB",
         "[ OK ] Mealie reachable at http://fake-mealie:9000: v3.22.0",
         "[ OK ] Mealie token: tester",
         "[ OK ] Mealie catalog: 3 tags, 2 foods, 1 units",
@@ -103,15 +102,6 @@ def test_claude_logged_in_with_an_api_key_is_rejected(workspace, mealie, system)
     assert result.exit_code == 1
     assert "[FAIL] claude CLI" in result.output
     assert "subscription" in result.output
-
-
-def test_no_gpu_is_informational_and_does_not_fail(workspace, mealie, system):
-    system.gpu = None
-
-    result = doctor(workspace, mealie, system)
-
-    assert result.exit_code == 0
-    assert "[WARN] NVIDIA GPU: not detected" in result.output
 
 
 def test_missing_ffmpeg_fails_with_the_winget_hint(workspace, mealie, system):

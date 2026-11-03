@@ -33,7 +33,6 @@ After Phase B, re-run the list's recipes so they pick up the better parsing and 
 
 14. `04-youtube-saved-lists`
 15. `05-classify-videos`
-16. `07-local-transcription` (needs wayfinder 17)
 17. `11-languages`
 18. `12-multi-recipe-videos`
 19. `14-pipeline-chrome-profile-and-login`
@@ -55,7 +54,8 @@ Research tickets (wayfinder 15–18) can run any time in parallel. They only wri
 30. `38-mealie-timeouts-and-hangs`: a silent Mealie must not hang a run
 31. `37-upload-name-clash`: "Recipe already exists" upload failures
 32. `36-outline-title-and-heading-signals`: stop uploading multi-recipe videos as one recipe
-33. `34-captions-and-cloud-transcription`: YouTube captions, then a cloud service; alternative to 07 (decide with the user first)
+33. `34-captions-and-cloud-transcription`: YouTube (and Facebook/Instagram if available) subtitles as a Source; no audio transcription
+33b. `39-ingredients-only-and-link-only-recipes`: ingredients-only captions become real recipes; videos with no usable text become link-only stubs (name, thumbnail, link, tags). Do it before 33 so the inbox bot never reports "needs transcription".
 34. `33-inbox-drain-worker`: Telegram links run through the pipeline and the bot reports back
 35. `31-pipeline-docker-image-and-compose`: separate compose project with the inbox bot and the pipeline (Mealie's compose stays untouched)
 36. `32-claude-login-in-container`: spike with the user; do it right after 31, because the Docker plan depends on it

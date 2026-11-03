@@ -5,7 +5,7 @@
 1. `GET <INBOX_URL>/pending` with `Authorization: Bearer <INBOX_API_TOKEN>` (settings `inbox.url`, `inbox.token`).
 2. Each URL goes through the URL Normalizer. A YouTube/Instagram/Facebook video becomes a Video in a Saved List `inbox:telegram`; a recipe-website link becomes a Recipe Request (ticket 26 path).
 3. Run all stages up to and including upload for those Videos only (`only_videos`).
-4. `POST /items/<id>/result` with `{"status": "done"|"not_recipe"|"failed", "mealie_urls": [...], "note": "..."}`: `done` with the Mealie link(s) (several for a multi-recipe video), `not_recipe` when classify says so (the label as note), `failed` with a short reason (for example "needs transcription").
+4. `POST /items/<id>/result` with `{"status": "done"|"not_recipe"|"failed", "mealie_urls": [...], "note": "..."}`: `done` with the Mealie link(s) (several for a multi-recipe video), `not_recipe` when classify says so (the label as note), `failed` with a short reason (for example "download failed"); a video with no usable text is `done` with the link-only stub's Mealie link.
 5. Unreachable bot or Mealie: wait and retry; never lose an item. An item already posted is not posted twice.
 
 The bot already accepts several chats (comma-separated `TELEGRAM_CHAT_ID`); each person gets the reply for their own link. A link queued twice by two people is one item: only the first sender gets the reply (known limit, note it in the README).

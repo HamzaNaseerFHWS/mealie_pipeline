@@ -8,7 +8,6 @@ class FakeSystemProbe:
         self.claude_status: str | None = '{"loggedIn": true, "authMethod": "claude.ai"}'
         self.yt_dlp: str | None = "2025.01.01"
         self.chrome = True
-        self.gpu: str | None = "NVIDIA GeForce GTX 1650, 4096 MiB"
 
     def python_version(self) -> tuple[int, int, int]:
         return self.python
@@ -24,6 +23,3 @@ class FakeSystemProbe:
 
     def chrome_available(self) -> bool:
         return self.chrome
-
-    def gpu_name(self) -> str | None:
-        return self.gpu

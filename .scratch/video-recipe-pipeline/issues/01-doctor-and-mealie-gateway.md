@@ -6,7 +6,6 @@
 - `claude` CLI found and logged in with a subscription (`claude auth status` reports `authMethod: claude.ai`)
 - Playwright's Chrome channel available
 - yt-dlp version
-- NVIDIA GPU visible (informational until ticket 07)
 - Mealie reachable at `MEALIE_URL`, with its version
 - the token valid (who it belongs to)
 - Catalog counts (tags, foods, units)
@@ -57,7 +56,7 @@ Run from a Windows box over Tailscale with a user token, by hand (PowerShell), b
 - **`MealieGateway`** (`adapters/mealie.py`) with `MealieHttpGateway` (httpx, timeouts, up to 3 connection retries with 1/2/4 s backoff, 401 → "token invalid", connection failure → "cannot reach Mealie at <url>: is Tailscale connected?") and `FakeMealie`. Typed errors in `errors.py` carry method, path, status and the body (redacted of the token, cut to 2 000 chars).
 - **`FakeMealie` enforces the live rules:** a PATCH with an unknown food or unit id fails, a `null` unit abbreviation is rejected (`create_unit` sends `""`), slugs are generated, tokens are checked.
 - **Test conventions for later tickets:** `tests/conftest.py` has the parametrised `gateway` fixture (fake / http / live). `tests/mealie_server.py` is a local HTTP stand-in for Mealie backed by `FakeMealie`; it records requests so tests can assert exact shapes. `Adapters(mealie=…, system=…)` is the injection bundle: the CLI uses the click context object when it is an `Adapters`, otherwise `build_adapters(settings)`. CLI tests use `CliRunner().invoke(app, ["--workspace", tmp, "doctor"], obj=Adapters(...))` with a `.env` in a temp workspace.
-- **`mp doctor`:** Python, ffmpeg, `claude` (must report `authMethod: claude.ai`), Playwright Chrome, yt-dlp, NVIDIA GPU (warning only), Mealie reachability + version, token owner, catalog counts. Exits 1 on a required failure, with a `fix:` line per failure. Tests cover all green, Mealie unreachable, bad token, `claude` missing, API-key login, no GPU, missing ffmpeg, old Python, missing settings.
+- **`mp doctor`:** Python, ffmpeg, `claude` (must report `authMethod: claude.ai`), Playwright Chrome, yt-dlp, Mealie reachability + version, token owner, catalog counts. Exits 1 on a required failure, with a `fix:` line per failure. Tests cover all green, Mealie unreachable, bad token, `claude` missing, API-key login, missing ffmpeg, old Python, missing settings.
 - **Live contract run:** the same contract tests run with `-m mealie_live` when `MEALIE_IT_URL` and `MEALIE_IT_TOKEN` are set, using `zz-it-…` names and cleaning up catalog entries afterwards. Run: `MEALIE_IT_URL=… MEALIE_IT_TOKEN=… uv run pytest -m mealie_live`.
 - ruff, ruff format, pyright and pytest all pass (65 tests, 18 live tests deselected).
 
@@ -71,5 +70,5 @@ Run from a Windows box over Tailscale with a user token, by hand (PowerShell), b
 ### Manual verification (user, on the laptop)
 
 1. `uv sync`, copy `.env.example` to `.env`, fill in `MEALIE_URL` and `MEALIE_TOKEN`.
-2. `uv run mp doctor`, and paste the output here. Expect all `[ OK ]` (the GPU line is a warning only if no NVIDIA GPU is seen).
+2. `uv run mp doctor`, and paste the output here. Expect all `[ OK ]`.
 3. Optional: `docker run -p 9925:9000 ghcr.io/mealie-recipes/mealie:v3.22.0`, create a user and token, then `MEALIE_IT_URL=http://localhost:9925 MEALIE_IT_TOKEN=… uv run pytest -m mealie_live`.

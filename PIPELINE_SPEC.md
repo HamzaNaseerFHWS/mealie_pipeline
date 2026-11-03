@@ -1,5 +1,7 @@
 # Mealie video recipe pipeline: plan and spec
 
+> **Note (ADR 0007):** audio transcription (Whisper, OpenAI, GPU/CUDA, `bench-whisper`, `asr` Sources, `needs_ocr`) was dropped. Wherever this document mentions it, it is superseded; the spec and tickets win.
+
 **Status:** Design reference v0.6. The build is driven by the spec and tickets in `.scratch/video-recipe-pipeline/` (see `CLAUDE.md`); this document holds the research and design detail they point to (input is your saved lists on YouTube, Instagram and Facebook; own collector, classifier, scraper, parser and verification; Mealie is storage only). Needs answers to the [open questions](#11-open-questions) before build starts.
 **Goal:** Give the pipeline links to your **saved playlists / collections** on YouTube, Instagram and Facebook (about 300 items each). It collects every video URL, keeps only real **recipe** videos (no restaurant ads, places to visit or product promos), and imports them into a self-hosted Mealie instance as clean recipes. Each recipe should have parsed ingredients (quantity, unit and food all linked) and at least one existing tag.
 
@@ -63,64 +65,6 @@ Its transcripts and AI output weren't good enough in practice either. **Decision
 | Mealie address | `http://mealie.taildce5a6.ts.net:9000` (Tailscale MagicDNS) |
 | Multi-recipe videos | Each recipe in a video is **extracted, checked, tagged and saved on its own**. Details in §6.1 |
 
-### Local transcription on a GTX 1650 (4 GB VRAM, no tensor cores)
-
-- **Engine:** `faster-whisper` (CTranslate2). The GTX 1650 has compute capability 7.5, which supports `float16`/`int8_float16`. It has no tensor cores, so it gains less from fp16 than newer cards, but it still runs many times faster than the CPU.
-- **Model ladder (tried in order, picked once by a benchmark on your laptop):**
-  1. `large-v3-turbo` with `compute_type="int8_float16"`, about 1.6–2.5 GB VRAM. **Default.** This is the best quality that fits comfortably in 4 GB.
-  2. `large-v3-turbo` with `int8`, if (1) runs out of memory or produces NaN/garbage on this card.
-  3. `medium` / `small` with `int8_float16`, the last resort for speed.
-  - Full `large-v3` is **not** used, because it doesn't fit reliably in 4 GB.
-- **Settings:** `batch_size=1`, `beam_size=5` (drop to 1 if too slow), `vad_filter=True`, `condition_on_previous_text=False` (reduces repetition loops on music), `language` set when known.
-- **One GPU job at a time.** Transcription runs as its own queue. Close games and browsers that use the GPU during long runs, because the 4 GB is shared with the display.
-- **`mp bench-whisper`** (in M0) transcribes 3 sample videos with each ladder step and records speed, VRAM and quality. Expected throughput is roughly 5–15× real time, so ~22 h of audio worst case takes about **2–5 h**, and likely much less after skipping videos that have a website recipe or subtitles. Good for an overnight run.
-- **Laptop care:** run plugged in. The queue is resumable, so closing the lid or a thermal slowdown loses nothing.
-- **CPU fallback:** `int8` on CPU works if CUDA setup is a problem. It's slow but still fine overnight.
-- **Emergency fallback:** OpenAI `gpt-4o-mini-transcribe` (about $0.003/min), only for videos where local transcription fails twice, and only when `--allow-openai` is set.
-
-### AI backend: Claude Code subscription via `claude -p`
-
-The pipeline never calls an API directly for Claude. It runs the **Claude Code CLI in non-interactive mode**, which uses your subscription login:
-
-```bash
-# --model: haiku for classification, sonnet for extract/verify
-# --safe-mode: no CLAUDE.md, hooks, plugins or MCP; login and model still work
-# --tools "": pure text in / JSON out, no file or shell access
-# stdin: the labeled sources (max 10 MB)
-claude -p \
-  --model sonnet \
-  --safe-mode \
-  --tools "" \
-  --system-prompt-file prompts/extract.md \
-  --output-format json \
-  --json-schema "$(cat schemas/extracted_recipe.json)" \
-  --no-session-persistence \
-  < work/<video_id>/llm_input.md
-```
-
-The result is in `.structured_output` of the JSON response, already validated against the schema. Pydantic validates it again on our side.
-
-- **Do not use `--bare`:** bare mode ignores the subscription login and needs an API key.
-- **Image input (OCR of on-screen text, phase 2):** the same call with `--tools "Read"`, run in a working directory that contains only the sampled frames.
-- **Usage limits:** subscription usage is limited per time window. The `llm` module detects `rate_limit` errors (exit code + `api_retry`/result error), **pauses the queue until the window resets**, and resumes. Nothing is lost, because every stage is resumable.
-- **Fewer, bigger calls to save usage:**
-  - Classification is batched (about 20 items per call, Haiku).
-  - Extraction, LLM ingredient parsing and tag selection happen in **one** Sonnet call per recipe.
-  - Verification (LLM judge) is a second call, made only when the deterministic checks pass. That's about **2–3 calls per recipe**.
-  - With ~300–600 recipes, the full run is spread over a few days of normal subscription limits. That's fine because `mp run` can be left running and resumes on its own.
-- **Concurrency:** 1 `claude -p` process at a time (Pro), configurable.
-- **Claude Pro specifics:**
-  - Pro has the smallest usage allowance, and `claude -p` runs share it with your normal Claude Code / claude.ai use. So `mp run` has a `--window night` option that only sends AI calls in hours you choose, and it backs off as soon as a limit message appears.
-  - **Usage-saving mode** is on by default for Pro:
-    - Haiku is used for classification, and for the LLM ingredient parse of recipes that come from structured website data. That's the easy case, so most lines are already settled by the local parser.
-    - The LLM judge (S7) is skipped for recipes that scored ≥ 90 on the deterministic checks.
-    - Sonnet is used where accuracy matters: extraction from transcripts, multi-recipe splitting, Urdu/Hindi romanization.
-    - The "retry with Opus" step becomes "retry with Sonnet at `--effort high`" unless Opus is available on your plan.
-  - The pilot measures usage per recipe, so we'll know how many recipes fit in a 5-hour window before the full run. Expect the full run to take **several days to about a week**, unattended. Stages that don't need AI (collecting, scraping, transcribing) run at full speed in the meantime.
-- **Terms of use:** this is personal, local, low-volume use of your own subscription through the official CLI. Anthropic's rules for scripted/Agent SDK use of subscriptions have been changing in 2026, so check the current Claude Code usage policy before the full run. If scripted use ever needs an API key, the backend switches to `ANTHROPIC_API_KEY` by changing config only.
-- **Emergency fallback: OpenAI** (`backend: openai` for a single stage or item). It's only used when `--allow-openai` is passed, with a hard spend cap (`OPENAI_MAX_USD`, default $2) tracked in the SQLite DB. Every OpenAI call is logged in the report.
-
-The backend is an interface (`llm.complete(prompt, schema, model_tier)`), so stages don't know or care which provider answered.
 
 ---
 
@@ -273,24 +217,9 @@ All available sources are still passed on, not only the best one. The verifier u
 
 ---
 
-## 5. Stage 2: Transcribe (our own, only when needed)
+## 5. Stage 2: Transcribe (removed)
 
-**Decision rule:** transcribe if there's no website recipe **or** a video is the only evidence for quantities. Even when a website exists, we still transcribe a short sample if the website ingredient list looks incomplete (fewer than 3 ingredients). We don't use Mealie's transcription or YouTube auto-subs as the main transcript, because auto-subs have no punctuation and garble ingredient names.
-
-Rough volume estimate: about 900 videos × about 1.5 min ≈ **22 h of audio** worst case (much less after skips).
-
-| Engine | When | Cost |
-|---|---|---|
-| **`faster-whisper` `large-v3-turbo` `int8_float16` on your GTX 1650** | default (see §2b for the model ladder) | free |
-| same, `int8` on CPU | CUDA problems | free (slow) |
-| OpenAI `gpt-4o-mini-transcribe` | only after 2 local failures **and** `--allow-openai` | about $0.003/min, capped |
-
-**Making it robust:**
-- **Vocabulary prompt:** the video title + description + common units go in `initial_prompt` / `prompt`, so "gochujang" isn't heard as "go-to-jang".
-- **Audio pre-processing:** `ffmpeg -af "highpass=f=100,lowpass=f=8000,loudnorm"`. Optional: separate vocals with `demucs` for videos with loud music (turned on automatically if the first pass has low average log-probability or `no_speech_prob > 0.5`).
-- **Quality signals stored per transcript:** average log-probability, no-speech ratio, and words per minute. A silent reel (music + text on screen) is detected here and routed to **on-screen text OCR**: sample 1 frame/s with `ffmpeg`, dedupe similar frames, and read the overlay text with a vision LLM. This is phase 2, but the routing exists from day one.
-
-Output: `transcript.json` (segments with timestamps), `transcript.txt`, `transcript.meta.json`.
+No audio transcription (ADR 0007). Subtitles are fetched when they exist (ticket 34); a video with no usable text becomes a link-only stub (ticket 39).
 
 ---
 

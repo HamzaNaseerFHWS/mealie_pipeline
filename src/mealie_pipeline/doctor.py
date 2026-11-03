@@ -40,7 +40,6 @@ def run_doctor(
         _claude(system),
         _chrome(system),
         _yt_dlp(system),
-        _gpu(system),
     ]
     if workspace is not None:
         checks += _sessions(workspace, now or datetime.now(UTC))
@@ -94,13 +93,6 @@ def _yt_dlp(system) -> Check:
     if version:
         return Check("ok", f"yt-dlp {version}")
     return Check("fail", "yt-dlp", "not installed", "run `uv sync`")
-
-
-def _gpu(system) -> Check:
-    name = system.gpu_name()
-    if name:
-        return Check("ok", "NVIDIA GPU", name)
-    return Check("warn", "NVIDIA GPU", "not detected (only needed for transcription from ticket 07)")
 
 
 def _sessions(workspace: Path, now: datetime) -> list[Check]:

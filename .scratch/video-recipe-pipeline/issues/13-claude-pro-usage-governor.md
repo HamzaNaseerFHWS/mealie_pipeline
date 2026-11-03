@@ -3,7 +3,7 @@
 **What to build:** Make long runs safe on a Claude Pro subscription.
 
 - **Detecting limits:** `ClaudeCliBackend` recognizes usage-limit failures (shapes recorded in wayfinder 18) and raises `UsageLimited(reset_at)`.
-- **Pausing:** the Stage Runner pauses all AI stages until the reset time (or polls every 15 min when no reset time is known), keeps non-AI stages (collect, scrape, transcribe) running, then resumes.
+- **Pausing:** the Stage Runner pauses all AI stages until the reset time (or polls every 15 min when no reset time is known), keeps non-AI stages (collect, scrape, subtitles) running, then resumes.
 - **Time window:** `mp run --window 23:00-07:00` only sends AI calls inside the window.
 - **Usage-saving mode** (default on):
   - the `fast` tier for classification, and for parsing website-structured recipes

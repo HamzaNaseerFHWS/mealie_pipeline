@@ -40,7 +40,7 @@ Built without ticket 07 (local transcription): the user is skipping Videos whose
 - Tests: `tests/test_outline_pure.py`, `tests/test_outline_seam.py` (part 2 fails Grounding while 1 and 3 upload; sibling links; rerun keeps parts). Two older tests adjusted for the new stage: the report column list, and the multi-recipe page test now scripts a one-part outline.
 
 **Deferred**
-- Splitting by transcript timestamps and spoken transitions (needs ticket 07).
+- Splitting by transcript timestamps and spoken transitions (dropped, ADR 0007: no transcripts).
 - Several *different* website pages for several parts: only recipes on the one page `scrape` fetched are matched to parts.
 - Parts without times (caption blocks only) get no frame; they use the thumbnail.
 - No test for the frame being used when the website image is missing beyond the part 1/3 call check, and none for a failed `outline` LLM call.

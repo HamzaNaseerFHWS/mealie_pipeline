@@ -25,10 +25,6 @@ class SystemProbe(Protocol):
         """Whether Playwright's `chrome` channel (the installed Google Chrome) can be launched."""
         ...
 
-    def gpu_name(self) -> str | None:
-        """`<name>, <memory>` of the first NVIDIA GPU, or None."""
-        ...
-
 
 def _run(argv: list[str]) -> str | None:
     try:
@@ -70,10 +66,3 @@ class RealSystemProbe:
         elif platform.system() == "Darwin":
             candidates.append("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
         return any(c and Path(c).is_file() for c in candidates)
-
-    def gpu_name(self) -> str | None:
-        exe = shutil.which("nvidia-smi")
-        if not exe:
-            return None
-        out = _run([exe, "--query-gpu=name,memory.total", "--format=csv,noheader"])
-        return out.splitlines()[0].strip() if out and out.strip() else None

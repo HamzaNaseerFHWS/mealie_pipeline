@@ -13,7 +13,7 @@ A personal pipeline that turns the user's **saved video lists** (YouTube playlis
 - Runs on the user's **Windows** laptop: native Python 3.12 (not WSL), NVIDIA **GTX 1650 (4 GB)**, Chrome.
 - Mealie runs on **another PC** reached over Tailscale at `http://mealie.taildce5a6.ts.net:9000`. Nothing of Mealie's own import, scraper, AI or ingredient parser is used. Mealie is storage plus tag/food/unit lookup only.
 - AI calls go through the **Claude Code CLI** (`claude -p`) on the user's **Claude Pro** subscription. There is no Anthropic API key. Never use `--bare` (it ignores the subscription login). OpenAI is an emergency fallback only, off unless `--allow-openai` is passed, with a hard spend cap.
-- Transcription is local `faster-whisper` on the GPU.
+- There is **no audio transcription** (ADR 0007). Text comes from the caption, the linked website and subtitles; a video with none of these becomes a link-only stub (name, thumbnail, link, tags) in Mealie.
 - Cloud/agent sessions usually **cannot reach** the Mealie PC, the user's browser logins or the GPU. Everything must be testable with the fakes described in the spec. Real-environment checks are listed as manual verification steps in each ticket, for the user to run on the laptop.
 
 ## Working on a ticket
