@@ -8,7 +8,7 @@
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `src/mealie_pipeline/outline.py` (`detect_signals`, `_MARKER`), `pipeline.py` (`_outline`), ticket 12.
 
