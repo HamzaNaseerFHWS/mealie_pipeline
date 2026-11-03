@@ -33,7 +33,7 @@ After Phase B, re-run the list's recipes so they pick up the better parsing and 
 
 14. `04-youtube-saved-lists`
 15. `05-classify-videos`
-17. `11-languages`
+17. `11-languages` (done): script check only
 18. `12-multi-recipe-videos`
 19. `14-pipeline-chrome-profile-and-login`
 20. `17-link-in-bio-and-creator-websites`

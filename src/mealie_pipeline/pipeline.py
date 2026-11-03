@@ -61,6 +61,7 @@ from mealie_pipeline.review import write_review_file
 from mealie_pipeline.sanity import check_line
 from mealie_pipeline.scoring import apply_judge, decide
 from mealie_pipeline.scrape import WebResult, find_web_recipe
+from mealie_pipeline.script_check import script_problems
 from mealie_pipeline.settings import Settings, VerifySettings
 from mealie_pipeline.store import EntityKind, RecipePart, StateStore, Status
 from mealie_pipeline.tagging import RecipeFacts, TagRules, choose, contradictions, match_existing, rule_tags
@@ -881,6 +882,14 @@ class Pipeline:
             )
         raw = self.a.llm.complete("extract", prompt, extraction_schema(tags), tier)
         recipe = ExtractedRecipe.model_validate(raw)
+        if problems := script_problems(recipe):  # one retry with the problem stated, then review
+            retry = prompt + "\nYour previous extraction used the wrong script. Fix these problems:\n"
+            retry += "\n".join(f"- {p}" for p in problems) + "\n"
+            recipe = ExtractedRecipe.model_validate(
+                self.a.llm.complete("extract", retry, extraction_schema(tags), tier)
+            )
+            if problems := script_problems(recipe):
+                raise NeedsReview("wrong script after one retry: " + "; ".join(problems))
         if not recipe.is_recipe:
             raise StageFailure(
                 f"the {'description and website page' if web else 'description'} does not contain a recipe"

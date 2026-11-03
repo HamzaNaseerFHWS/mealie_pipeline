@@ -1,25 +1,20 @@
-# 11: English, German and Roman Urdu/Hindi recipes with English ingredients
+# 11: Script check for Urdu/Hindi and ingredient lines
 
-**What to build:** Per-Recipe-Part language handling.
+**What to build:** A pure check on each extraction: the name, description and steps of an Urdu/Hindi recipe must be in Roman letters (no Devanagari or Arabic script), and every Ingredient Line must be English script. A violation triggers one extraction retry with the problem stated, then the recipe goes to review (`NeedsReview`).
 
-- **Detection:** the Recipe Language (en/de/ur/hi) is detected from the subtitle language, the caption script and the website's `inLanguage`/`<html lang>`. Code-mixed Hinglish/Urdu-English with mostly Urdu/Hindi instructions counts as ur/hi.
-- **Recipe text:**
-  - English stays English.
-  - German name, description and steps stay German.
-  - Urdu/Hindi name, description and steps are written in **Roman Urdu/Hindi**, never Devanagari or Nastaliq. The style comes from `prompts/style_roman_urdu.md`, with English ingredient names inside the steps.
-- **Ingredients:** every Ingredient Line is **English**. German and desi lines are translated during extraction using `config/glossary_desi.yaml` and `glossary_de_en.yaml` (shipped with a solid starter set). The original line is kept as `originalText` and is what Grounding checks.
-- **Language tag:** added by rule if a matching tag exists.
+Scope cut (user decision): the language detector and the glossary files are dropped. The extract prompt already handles language, and German aliases were done in ticket 30.
 
-**Blocked by:** 09, 07
+**Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** done
 
-**Read first:** `PIPELINE_SPEC.md` §2c; `docs/adr/0003`; wayfinder tickets `08-languages.md`, `11-romanization-style.md`.
+- [x] `script_problems(recipe)` is pure and table-tested (`src/mealie_pipeline/script_check.py`, `tests/test_script_check.py`).
+- [x] Pipeline-seam tests: a Devanagari name is retried once with the problem in the prompt and the retry uploads; a second failure goes to review and uploads nothing.
 
-- [ ] Language detection is pure (given the subtitle language, the caption text and the HTML lang) and table-tested, including Hinglish captions in Latin script.
-- [ ] A pure script validator rejects Devanagari/Arabic-script characters in the name/description/steps of ur/hi recipes and anything non-English in Ingredient Lines (heuristic + glossary). A violation triggers one extraction retry with the problem stated, then review.
-- [ ] The glossaries ship with at least 60 desi and 60 German entries (spices, flours, dals, dairy, vegetables, common units). They're loaded into the extraction prompt only for the matching language.
-- [ ] Grounding uses `original_line` / original-script quotes. A pipeline-seam test with a Hindi-Devanagari caption fixture uploads a recipe with Roman steps and English ingredients, and all quotes are grounded.
-- [ ] Pipeline-seam test: a German website recipe uploads with German steps and English ingredients (`originalText` German).
+## Comments
 
-**Manual check on the laptop (user):** import one German and one Urdu/Hindi Video, and check that the steps read naturally and the ingredients are English.
+**Built:** the check, wired into `_run_extraction` in `pipeline.py` (one retry at the same tier, then `NeedsReview` "wrong script after one retry").
+
+**Not checked:** German or other non-English words written in Latin letters inside an Ingredient Line. Only script is checked.
+
+**Manual check (user):** import one Urdu/Hindi video and check the steps are in Roman letters.
