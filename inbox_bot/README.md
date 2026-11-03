@@ -11,7 +11,7 @@ Standard library only. The whole bot is [bot.py](bot.py).
 1. Copy this folder to the Mealie PC.
 2. `cp .env.example .env` and fill in `TELEGRAM_BOT_TOKEN` and `INBOX_API_TOKEN`. Leave `TELEGRAM_CHAT_ID` empty.
 3. `docker compose up -d --build`
-4. Send the bot any message. It replies with your chat ID. Put it in `.env` as `TELEGRAM_CHAT_ID`.
+4. Send the bot any message. It replies with your chat ID. Put it in `.env` as `TELEGRAM_CHAT_ID`. For two people, have your partner message the bot too, then list both IDs separated by a comma: `TELEGRAM_CHAT_ID=111111111,222222222`. Each person gets the replies for their own links.
 5. `docker compose up -d` again (restarts with the new env). From now on the bot only listens to you.
 
 Check it: `docker compose logs -f`, and from the laptop `curl http://<mealie-pc>:8765/health`.

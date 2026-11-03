@@ -9,7 +9,8 @@ Runs on the always-on Mealie PC. Standard library only, so the Docker image need
 
 Environment:
     TELEGRAM_BOT_TOKEN   token from @BotFather (required)
-    TELEGRAM_CHAT_ID     your chat id; leave empty at first and send /start to learn it
+    TELEGRAM_CHAT_ID     chat id(s) allowed to use the bot, comma-separated (you and your partner);
+                         leave empty at first, message the bot and it replies with the sender's chat id
     INBOX_API_TOKEN      shared secret the laptop sends as `Authorization: Bearer ...` (required)
     INBOX_DB             SQLite path (default /data/inbox.db)
     INBOX_PORT           HTTP API port (default 8765)
@@ -34,6 +35,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -153,7 +155,9 @@ def _item(row: sqlite3.Row) -> Item:
     )
 
 
-def handle_update(update: dict[str, Any], queue: Queue, allowed_chat_id: int | None, send: SendFn) -> None:
+def handle_update(
+    update: dict[str, Any], queue: Queue, allowed_chat_ids: AbstractSet[int], send: SendFn
+) -> None:
     """React to one Telegram update: queue its links and acknowledge them."""
     message = update.get("message") or update.get("channel_post")
     if not message:
@@ -162,11 +166,15 @@ def handle_update(update: dict[str, Any], queue: Queue, allowed_chat_id: int | N
     message_id: int | None = message.get("message_id")
     text = (message.get("text") or "").strip()
 
-    if allowed_chat_id is None:
+    if not allowed_chat_ids:
         # Setup mode: only tell the sender their chat id, store nothing.
-        send(chat_id, f"Your chat ID is {chat_id}. Put it in TELEGRAM_CHAT_ID and restart the bot.", None)
+        send(
+            chat_id,
+            f"Your chat ID is {chat_id}. Add it to TELEGRAM_CHAT_ID (comma-separated) and restart.",
+            None,
+        )
         return
-    if chat_id != allowed_chat_id:
+    if chat_id not in allowed_chat_ids:
         log.warning("ignoring message from chat %s", chat_id)
         return
 
@@ -248,7 +256,7 @@ class TelegramClient:
             log.error("could not send Telegram message: %s", exc)
 
 
-def poll_forever(client: TelegramClient, queue: Queue, allowed_chat_id: int | None) -> None:
+def poll_forever(client: TelegramClient, queue: Queue, allowed_chat_ids: AbstractSet[int]) -> None:
     offset = queue.get_offset()
     backoff = 1
     while True:
@@ -262,7 +270,7 @@ def poll_forever(client: TelegramClient, queue: Queue, allowed_chat_id: int | No
             continue
         for update in updates:
             try:
-                handle_update(update, queue, allowed_chat_id, client.send)
+                handle_update(update, queue, allowed_chat_ids, client.send)
             except Exception:
                 log.exception("failed to handle update %s", update.get("update_id"))
             offset = update["update_id"] + 1
@@ -335,7 +343,7 @@ def main() -> None:
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     api_token = os.environ["INBOX_API_TOKEN"]
     chat_raw = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    allowed_chat_id = int(chat_raw) if chat_raw else None
+    allowed_chat_ids = frozenset(int(c) for c in chat_raw.replace(";", ",").split(",") if c.strip())
     queue = Queue(os.environ.get("INBOX_DB", "/data/inbox.db"))
     client = TelegramClient(token)
 
@@ -343,10 +351,10 @@ def main() -> None:
     server = ThreadingHTTPServer(("0.0.0.0", port), make_api_handler(queue, api_token, client.send))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     log.info("API listening on :%s", port)
-    if allowed_chat_id is None:
+    if not allowed_chat_ids:
         log.warning("TELEGRAM_CHAT_ID not set: setup mode, replying with chat IDs only")
 
-    poll_forever(client, queue, allowed_chat_id)
+    poll_forever(client, queue, allowed_chat_ids)
 
 
 if __name__ == "__main__":

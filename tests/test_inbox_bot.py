@@ -57,7 +57,7 @@ def test_extract_urls_reads_captions_and_drops_duplicates() -> None:
 
 def test_link_from_my_chat_is_queued_and_acknowledged(queue: Queue) -> None:
     sent = Sent()
-    handle_update(update("https://youtu.be/a"), queue, ME, sent)
+    handle_update(update("https://youtu.be/a"), queue, {ME}, sent)
 
     [item] = queue.pending()
     assert (item.url, item.chat_id, item.message_id) == ("https://youtu.be/a", ME, 5)
@@ -66,8 +66,8 @@ def test_link_from_my_chat_is_queued_and_acknowledged(queue: Queue) -> None:
 
 def test_same_link_twice_is_queued_once(queue: Queue) -> None:
     sent = Sent()
-    handle_update(update("https://youtu.be/a"), queue, ME, sent)
-    handle_update(update("https://youtu.be/a", message_id=6), queue, ME, sent)
+    handle_update(update("https://youtu.be/a"), queue, {ME}, sent)
+    handle_update(update("https://youtu.be/a", message_id=6), queue, {ME}, sent)
 
     assert len(queue.pending()) == 1
     assert sent.messages[-1] == (ME, "Already queued earlier 👍", 6)
@@ -75,15 +75,29 @@ def test_same_link_twice_is_queued_once(queue: Queue) -> None:
 
 def test_messages_from_other_chats_are_ignored(queue: Queue) -> None:
     sent = Sent()
-    handle_update(update("https://youtu.be/a", chat_id=STRANGER), queue, ME, sent)
+    handle_update(update("https://youtu.be/a", chat_id=STRANGER), queue, {ME}, sent)
 
     assert queue.pending() == []
     assert sent.messages == []
 
 
+def test_a_second_allowed_chat_can_queue_links_and_gets_its_own_replies(queue: Queue) -> None:
+    sent = Sent()
+    partner = 777
+    handle_update(update("https://youtu.be/a"), queue, {ME, partner}, sent)
+    handle_update(update("https://youtu.be/b", chat_id=partner), queue, {ME, partner}, sent)
+    handle_update(update("https://youtu.be/c", chat_id=STRANGER), queue, {ME, partner}, sent)
+
+    assert sorted((i.url, i.chat_id) for i in queue.pending()) == [
+        ("https://youtu.be/a", ME),
+        ("https://youtu.be/b", partner),
+    ]
+    assert [m[0] for m in sent.messages] == [ME, partner]
+
+
 def test_setup_mode_only_reports_the_chat_id(queue: Queue) -> None:
     sent = Sent()
-    handle_update(update("https://youtu.be/a", chat_id=STRANGER), queue, None, sent)
+    handle_update(update("https://youtu.be/a", chat_id=STRANGER), queue, frozenset(), sent)
 
     assert queue.pending() == []
     assert "999" in sent.messages[0][1]
@@ -91,7 +105,7 @@ def test_setup_mode_only_reports_the_chat_id(queue: Queue) -> None:
 
 def test_message_without_link_gets_a_hint(queue: Queue) -> None:
     sent = Sent()
-    handle_update(update("hello"), queue, ME, sent)
+    handle_update(update("hello"), queue, {ME}, sent)
 
     assert queue.pending() == []
     assert sent.messages == [(ME, "No link found in that message.", 5)]
