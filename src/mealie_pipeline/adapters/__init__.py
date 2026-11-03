@@ -40,7 +40,7 @@ class Adapters:
 def build_adapters(settings: Settings, workspace: Path) -> Adapters:
     token = settings.mealie_token.get_secret_value() if settings.mealie_token else ""
     claude_slots = threading.BoundedSemaphore(settings.llm.max_parallel)  # shared by every claude call
-    videos = YtDlpVideoSource()
+    videos = YtDlpVideoSource(cookiefile=cookies_file(workspace))
     return Adapters(
         mealie=MealieHttpGateway(
             settings.mealie_url or "",

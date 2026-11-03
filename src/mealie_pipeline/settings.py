@@ -1,6 +1,7 @@
 """Settings: `config/settings.yaml` defaults, overridden by `.env`, overridden by the environment.
 
-Secrets (`MEALIE_URL`, `MEALIE_TOKEN`, `OPENAI_API_KEY`, `OPENAI_MAX_USD`) are read only from `.env`
+Secrets (`MEALIE_URL`, `MEALIE_TOKEN`, `OPENAI_API_KEY`, `OPENAI_MAX_USD`, `INBOX_URL`,
+`INBOX_API_TOKEN`) are read only from `.env`
 or the environment. Nested yaml keys are overridden with a double underscore, such as
 `MEALIE__TIMEOUT_SECONDS`.
 """
@@ -218,6 +219,17 @@ class VerifySettings(BaseModel):
     site_search_upload_at: float = 90
 
 
+class InboxSettings(BaseModel):
+    """`mp inbox-worker` (ticket 33): the Telegram inbox bot's API. `INBOX_URL` and
+    `INBOX_API_TOKEN` (secrets, from `.env` or the environment) fill `url` and `token`."""
+
+    url: str | None = None  # e.g. http://inbox:8765 inside the compose project
+    token: SecretStr | None = None
+    poll_seconds: float = Field(default=60, gt=0)  # between two looks at the queue
+    timeout_seconds: float = 30
+    list_key: str = "inbox:telegram"  # the Saved List the inbox's Videos belong to
+
+
 class Settings(BaseModel):
     mealie: MealieSettings = Field(default_factory=MealieSettings)
     verify: VerifySettings = Field(default_factory=VerifySettings)
@@ -229,6 +241,7 @@ class Settings(BaseModel):
     parse: ParseSettings = Field(default_factory=ParseSettings)
     classify: ClassifySettings = Field(default_factory=ClassifySettings)
     outline: OutlineSettings = Field(default_factory=OutlineSettings)
+    inbox: InboxSettings = Field(default_factory=InboxSettings)
     mealie_url: str | None = None
     mealie_token: SecretStr | None = None
     openai_api_key: SecretStr | None = None
@@ -241,7 +254,21 @@ class Settings(BaseModel):
 
 
 SECRET_FIELDS = {"mealie_url", "mealie_token", "openai_api_key", "openai_max_usd"}
-NESTED_SECTIONS = {"mealie", "run", "llm", "images", "verify", "web", "find", "parse", "classify", "outline"}
+NESTED_SECTIONS = {
+    "mealie",
+    "run",
+    "llm",
+    "images",
+    "verify",
+    "web",
+    "find",
+    "parse",
+    "classify",
+    "outline",
+    "inbox",
+}
+# Secrets that land in a nested section: `INBOX_URL` -> `inbox.url`.
+SECRET_ALIASES = {"inbox_url": ("inbox", "url"), "inbox_api_token": ("inbox", "token")}
 
 
 def _apply_overrides(data: dict[str, Any], overrides: Mapping[str, str | None]) -> None:
@@ -255,6 +282,9 @@ def _apply_overrides(data: dict[str, Any], overrides: Mapping[str, str | None]) 
                 data.setdefault(section, {})[name] = value
         elif key in SECRET_FIELDS:
             data[key] = value
+        elif key in SECRET_ALIASES:
+            section, name = SECRET_ALIASES[key]
+            data.setdefault(section, {})[name] = value
 
 
 def load_settings(workspace: Path, environ: Mapping[str, str] | None = None) -> Settings:
