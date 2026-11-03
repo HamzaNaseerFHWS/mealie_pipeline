@@ -15,7 +15,7 @@
 
 **Blocked by:** 02, 08. Interacts with 34 (subtitles are tried before a stub) and 36 (a multi-recipe-looking title with nothing to split goes to review, unless there is no text at all, then a stub).
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **Read first:** `ADR 0007`, `src/mealie_pipeline/pipeline.py` (extract, verify and upload stages), `verify.py`, `images.py`, `uploader`, `prompts/` (extract prompt), ticket 08.
 
