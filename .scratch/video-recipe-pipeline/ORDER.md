@@ -48,3 +48,14 @@ After Phase B, re-run the list's recipes so they pick up the better parsing and 
 28. `24-schedule-auto-sync`
 
 Research tickets (wayfinder 15–18) can run any time in parallel. They only write findings, and Phase C needs them.
+
+## Phase D: run it on the Mealie PC, and close the gaps found in the first real runs
+
+29. `35-instagram-facebook-export-import` (done): saved Instagram/Facebook posts from the data exports; replaces the live collectors (15, 16) for this user
+30. `38-mealie-timeouts-and-hangs`: a silent Mealie must not hang a run
+31. `37-upload-name-clash`: "Recipe already exists" upload failures
+32. `36-outline-title-and-heading-signals`: stop uploading multi-recipe videos as one recipe
+33. `34-captions-and-cloud-transcription`: YouTube captions, then a cloud service; alternative to 07 (decide with the user first)
+34. `33-inbox-drain-worker`: Telegram links run through the pipeline and the bot reports back
+35. `31-pipeline-docker-image-and-compose`: separate compose project with the inbox bot and the pipeline (Mealie's compose stays untouched)
+36. `32-claude-login-in-container`: spike with the user; do it right after 31, because the Docker plan depends on it
