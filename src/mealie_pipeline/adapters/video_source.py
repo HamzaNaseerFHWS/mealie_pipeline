@@ -105,6 +105,15 @@ def meta_from_info(info: dict[str, Any]) -> VideoMeta:
     )
 
 
+def merge_carousel(info: dict[str, Any]) -> dict[str, Any]:
+    """A multi-item post (an Instagram carousel) comes back as a playlist whose caption sits on the
+    playlist itself. Fill what it lacks (thumbnail, duration, link) from the first item that loaded."""
+    first = next((e for e in info.get("entries") or [] if isinstance(e, dict)), {})
+    merged = {k: v for k, v in first.items() if v not in (None, "")}
+    merged.update({k: v for k, v in info.items() if k != "entries" and v not in (None, "")})
+    return merged
+
+
 def pick_subtitle_track(info: dict[str, Any]) -> str | None:
     """URL of the best text track: the creator's subtitles before automatic captions, the Video's own
     language before English before anything else, WebVTT when offered."""
@@ -200,11 +209,17 @@ class YtDlpVideoSource:
             with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore[arg-type]
                 info = ydl.extract_info(url, download=False)
         except DownloadError as err:
-            if is_login_error(str(err)):
-                raise LoginRequired(f"login needed (refresh secrets/cookies.txt): {err}") from err
-            raise VideoSourceError(str(err)) from err
+            if "no video formats" not in str(err).lower():
+                if is_login_error(str(err)):
+                    raise LoginRequired(f"login needed (refresh secrets/cookies.txt): {err}") from err
+                raise VideoSourceError(str(err)) from err
+            # A post of several items where one is a photo: skip the item that has no video.
+            with yt_dlp.YoutubeDL({**options, "ignoreerrors": True}) as ydl:  # type: ignore[arg-type]
+                info = ydl.extract_info(url, download=False)
         if not isinstance(info, dict):
             raise VideoSourceError(f"yt-dlp returned nothing for {url}")
+        if info.get("_type") == "playlist":
+            info = merge_carousel(dict(info))
         return meta_from_info(dict(info))
 
     def pinned_comments(self, url: str) -> str:
