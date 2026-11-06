@@ -1,0 +1,54 @@
+# The recipe pipeline as a Portainer stack: paste this into Stacks -> Add stack -> Web editor.
+# Differences from compose.yml: no build, no .env file and no ./folders. Secrets are set under
+# "Environment variables" in the Portainer UI; imports/ and secrets/ are named volumes.
+#
+# Needs a registry entry in Portainer (Registries -> Add registry -> Custom: ghcr.io, your GitHub user,
+# a classic token with read:packages). See README.md in this folder.
+name: recipe-pipeline
+
+services:
+  inbox:
+    image: ghcr.io/hamzanaseerfhws/mealie_pipeline-inbox:latest
+    restart: unless-stopped
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN}
+      INBOX_API_TOKEN: ${INBOX_API_TOKEN:?set INBOX_API_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      INBOX_DB: /data/inbox.db
+    volumes:
+      - inbox-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  pipeline:
+    image: ghcr.io/hamzanaseerfhws/mealie_pipeline-pipeline:latest
+    restart: unless-stopped
+    depends_on:
+      inbox:
+        condition: service_healthy
+    environment:
+      MEALIE_URL: ${MEALIE_URL:-http://host.docker.internal:9000}
+      MEALIE_TOKEN: ${MEALIE_TOKEN:?set MEALIE_TOKEN}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      INBOX_API_TOKEN: ${INBOX_API_TOKEN:?set INBOX_API_TOKEN}
+      INBOX_URL: http://inbox:8765
+      WEB__BROWSER_HEADLESS: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - pipeline-data:/workspace
+      - claude-login:/home/mp/.claude
+      - imports:/workspace/imports
+      - secrets:/workspace/secrets
+    stop_grace_period: 10m
+
+volumes:
+  inbox-data:
+  pipeline-data:
+  claude-login:
+  imports:
+  secrets:
