@@ -73,6 +73,32 @@ def test_same_link_twice_is_queued_once(queue: Queue) -> None:
     assert sent.messages[-1] == (ME, "Already queued earlier 👍", 6)
 
 
+def test_a_link_that_failed_can_be_sent_again(queue: Queue) -> None:
+    sent = Sent()
+    handle_update(update("https://youtu.be/a"), queue, {ME}, sent)
+    [first] = queue.pending()
+    queue.finish(first.id, "failed", {"status": "failed", "note": "download failed"})
+
+    handle_update(update("https://youtu.be/a", message_id=9), queue, {ME}, sent)
+
+    [again] = queue.pending()
+    assert (again.url, again.message_id) == ("https://youtu.be/a", 9)
+    assert again.id != first.id
+    assert sent.messages[-1] == (ME, "Saved ✅", 9)
+
+
+def test_a_link_that_succeeded_is_not_queued_again(queue: Queue) -> None:
+    sent = Sent()
+    handle_update(update("https://youtu.be/a"), queue, {ME}, sent)
+    [first] = queue.pending()
+    queue.finish(first.id, "done", {"status": "done"})
+
+    handle_update(update("https://youtu.be/a", message_id=9), queue, {ME}, sent)
+
+    assert queue.pending() == []
+    assert sent.messages[-1] == (ME, "Already queued earlier 👍", 9)
+
+
 def test_messages_from_other_chats_are_ignored(queue: Queue) -> None:
     sent = Sent()
     handle_update(update("https://youtu.be/a", chat_id=STRANGER), queue, {ME}, sent)

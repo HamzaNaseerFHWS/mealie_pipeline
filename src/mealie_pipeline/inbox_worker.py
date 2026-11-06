@@ -25,7 +25,7 @@ from typing import Any, Protocol
 import httpx
 
 from mealie_pipeline.models import VideoMeta
-from mealie_pipeline.pipeline import ALSO_ON, Pipeline
+from mealie_pipeline.pipeline import ALSO_ON, STAGES, Pipeline
 from mealie_pipeline.store import StateStore
 from mealie_pipeline.url_normalizer import normalize_web, resolve
 
@@ -204,6 +204,8 @@ class InboxWorker:
         else:
             tracked.result = failed("not a link the pipeline can read")
             return
+        # Sending a link again is a request to retry it: stages that failed before run again.
+        self.store.reset_stages(list(STAGES), keys=[tracked.video_key], failed_only=True)
         self.store.add_list(self.list_key, "telegram", "telegram://inbox")
         self.store.record_sync(
             self.list_key, sorted(self.store.list_video_keys(self.list_key) | {tracked.video_key})

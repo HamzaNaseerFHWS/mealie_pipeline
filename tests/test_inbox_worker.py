@@ -122,6 +122,23 @@ def test_a_link_that_cannot_be_downloaded_fails_with_a_reason(tmp_path):
     assert result["note"].startswith("download failed")
 
 
+def test_sending_a_failed_link_again_runs_it_again(tmp_path):
+    world = World(tmp_path)
+    infos = dict(world.videos.infos)
+    world.videos.infos.clear()
+    inbox = FakeInbox([InboxItem(1, URL)])
+    worker = worker_for(world, inbox)
+    worker.cycle()
+    assert inbox.posted[0][1]["status"] == "failed"
+
+    world.videos.infos.update(infos)
+    inbox.items.append(InboxItem(2, URL))
+    worker.cycle()
+
+    assert [(i, r["status"]) for i, r in inbox.posted] == [(1, "failed"), (2, "done")]
+    assert len(world.mealie.recipes) == 1
+
+
 def test_a_link_the_pipeline_cannot_read_fails_without_a_run(tmp_path):
     world = World(tmp_path)
     inbox = FakeInbox([InboxItem(1, "mailto:someone@example.com")])

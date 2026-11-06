@@ -102,8 +102,11 @@ class Queue:
             )
 
     def add(self, url: str, chat_id: int, message_id: int | None) -> tuple[Item, bool]:
-        """Queue a link. Returns the item and whether it was new (a repeat keeps its first entry)."""
+        """Queue a link. Returns the item and whether it was new (a repeat keeps its first entry).
+
+        A link whose earlier attempt failed is queued afresh, so sending it again retries it."""
         with self._lock, self._db:
+            self._db.execute("DELETE FROM items WHERE url = ? AND status = 'failed'", (url,))
             cur = self._db.execute(
                 "INSERT OR IGNORE INTO items (url, chat_id, message_id, received_at) VALUES (?, ?, ?, ?)",
                 (url, chat_id, message_id, _now()),
