@@ -24,10 +24,11 @@ from typing import Any, Protocol
 
 import httpx
 
+from mealie_pipeline.adapters.video_source import VideoSourceError
 from mealie_pipeline.models import VideoMeta
 from mealie_pipeline.pipeline import ALSO_ON, STAGES, Pipeline
 from mealie_pipeline.store import StateStore
-from mealie_pipeline.url_normalizer import normalize_web, resolve
+from mealie_pipeline.url_normalizer import NormalizedUrl, needs_redirect, normalize, normalize_web, resolve
 
 STATE_FILE = Path("data") / "inbox_items.json"
 NOTE_CHARS = 300  # of a failure reason sent to Telegram
@@ -188,6 +189,8 @@ class InboxWorker:
         """Turns the link into a Video of the inbox list, or a recipe-page item; a link that is
         neither is reported as failed."""
         video = resolve(tracked.url, self.expand)
+        if video is None and needs_redirect(tracked.url):
+            video = self._resolve_with_downloader(tracked.url)
         if video is not None:
             self.store.add_video(
                 video.video_key, video.platform, video.video_id, tracked.url, video.canonical_url
@@ -210,6 +213,15 @@ class InboxWorker:
         self.store.record_sync(
             self.list_key, sorted(self.store.list_video_keys(self.list_key) | {tracked.video_key})
         )
+
+    def _resolve_with_downloader(self, url: str) -> NormalizedUrl | None:
+        """A Facebook share link answers a plain request with an error, so the redirect cannot be
+        followed; the downloader (yt-dlp) can, and tells which Video it points to."""
+        try:
+            meta = self.pipeline.a.videos.metadata(url)
+        except VideoSourceError:
+            return None
+        return normalize(meta.webpage_url)
 
     # -- outcome --------------------------------------------------------------------------
 

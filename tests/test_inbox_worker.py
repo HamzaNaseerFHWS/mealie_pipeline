@@ -139,6 +139,23 @@ def test_sending_a_failed_link_again_runs_it_again(tmp_path):
     assert len(world.mealie.recipes) == 1
 
 
+def test_a_facebook_share_link_the_redirect_cannot_resolve_is_resolved_by_the_downloader(tmp_path):
+    share = "https://www.facebook.com/share/r/19uAzn9G7X/"
+    canonical = "https://www.facebook.com/watch/?v=1669420287910162"
+    world = World(tmp_path)
+    info = dict(world.videos.infos[CANONICAL])
+    # Facebook answers a plain request with 400, so the redirect leaves the share link as it is;
+    # the downloader knows the Video behind it.
+    world.videos.infos[share] = {**info, "webpage_url": canonical + "&_rdr"}
+    world.videos.infos[canonical] = {**info, "webpage_url": canonical}
+    inbox = FakeInbox([InboxItem(1, share)])
+
+    worker_for(world, inbox).cycle()
+
+    assert [r["status"] for _i, r in inbox.posted] == ["done"]
+    assert "facebook:1669420287910162" in world.store().list_video_keys("inbox:telegram")
+
+
 def test_a_link_the_pipeline_cannot_read_fails_without_a_run(tmp_path):
     world = World(tmp_path)
     inbox = FakeInbox([InboxItem(1, "mailto:someone@example.com")])
